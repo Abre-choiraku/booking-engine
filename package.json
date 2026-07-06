@@ -1,0 +1,51 @@
+{
+  "name": "@sheals/booking-engine",
+  "version": "0.1.0",
+  "description": "予約・日程調整の共有エンジン（SHEALS ops / 単体予約アプリ / VAILS が共通で読み込む核）",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts",
+    "./config": "./src/config.ts",
+    "./availability": "./src/core/availability.ts",
+    "./google": "./src/google/oauth.ts",
+    "./notify": "./src/notify/index.ts",
+    "./repo/booking-links": "./src/repo/booking-links.ts",
+    "./repo/schedule-polls": "./src/repo/schedule-polls.ts",
+    "./migrations/*": "./migrations/*"
+  },
+  "files": [
+    "src",
+    "migrations",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.0",
+    "@types/node": "^26.1.0",
+    "googleapis": "^144.0.0"
+  },
+  "peerDependencies": {
+    "@supabase/ssr": "*",
+    "next": ">=15",
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "@supabase/ssr": {
+      "optional": true
+    },
+    "next": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
