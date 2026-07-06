@@ -78,7 +78,7 @@ export async function createBookingLink(input: {
   min_notice_hours: number;
   slot_mode: "hours" | "ranges" | "both" | "anytime";
   deadline_at?: string | null;
-  meeting_type: "none" | "meet";
+  meeting_type: "none" | "meet" | "zoom";
   cancel_deadline_hours: number;
   capacity_per_slot: number;
   link_type: "calendar" | "event";

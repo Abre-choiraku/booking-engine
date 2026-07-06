@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { anonClient, resolveCalendar, resolveHooks } from "../config";
 import { notifyReservationCancelled } from "../notify";
 import { getOwnerCalendar } from "../google/calendar";
+import { deleteZoomMeeting } from "../zoom";
 import { slotCapacity } from "../core/availability";
 import type { BookingLinkRow } from "../types";
 
@@ -29,6 +30,7 @@ type ReservationRow = {
   status: string;
   event_id: string | null;
   google_event_id: string | null;
+  zoom_meeting_id: string | null;
   meet_url: string | null;
   link: BookingLinkRow;
 };
@@ -38,7 +40,7 @@ async function loadByToken(ctoken: string): Promise<ReservationRow | null> {
   const { data } = await supabase
     .from("booking_reservations")
     .select(
-      "id, link_id, start_at, end_at, guest_name, guest_email, status, event_id, google_event_id, meet_url, link:booking_links(*)",
+      "id, link_id, start_at, end_at, guest_name, guest_email, status, event_id, google_event_id, zoom_meeting_id, meet_url, link:booking_links(*)",
     )
     .eq("cancel_token", ctoken)
     .maybeSingle();
@@ -139,6 +141,9 @@ export function createCancelHandler() {
                 .catch(() => {});
             }
           }
+          if (se?.zoom_meeting_id) {
+            await deleteZoomMeeting(se.zoom_meeting_id);
+          }
           if (se?.event_id) {
             await calendar.deleteMirrorEvent(se.event_id);
           }
@@ -177,7 +182,7 @@ export function createCancelHandler() {
         console.error("group cancel sync failed:", (e as Error).message);
       }
     } else {
-      // ==== 1対1: Google 予定 + ミラー予定を削除 ====
+      // ==== 1対1: Google 予定 + Zoom + ミラー予定を削除 ====
       try {
         if (r.google_event_id) {
           const gcal = await getOwnerCalendar(r.link.owner_user_id);
@@ -186,6 +191,9 @@ export function createCancelHandler() {
               .delete({ calendarId: "primary", eventId: r.google_event_id })
               .catch(() => {});
           }
+        }
+        if (r.zoom_meeting_id) {
+          await deleteZoomMeeting(r.zoom_meeting_id);
         }
         if (r.event_id) {
           await calendar.deleteMirrorEvent(r.event_id);

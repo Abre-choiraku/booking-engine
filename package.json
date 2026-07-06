@@ -12,6 +12,7 @@
     "./config": "./src/config.ts",
     "./availability": "./src/core/availability.ts",
     "./google": "./src/google/oauth.ts",
+    "./zoom": "./src/zoom/index.ts",
     "./notify": "./src/notify/index.ts",
     "./repo/booking-links": "./src/repo/booking-links.ts",
     "./repo/schedule-polls": "./src/repo/schedule-polls.ts",

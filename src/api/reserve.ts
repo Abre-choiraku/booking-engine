@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { anonClient, resolveCalendar, resolveHooks, getEngineConfig } from "../config";
 import { notifyReservationConfirmed } from "../notify";
 import { getOwnerCalendar } from "../google/calendar";
+import { createZoomMeeting } from "../zoom";
 import { isSlotAvailable, fetchWindows, slotCapacity } from "../core/availability";
 import type { BookingLinkRow } from "../types";
 
@@ -179,6 +180,7 @@ export function createReserveHandler() {
     const cancelToken = generateCancelToken();
     const isGroup = slotCapacity(link) > 1;
     const wantMeet = link.meeting_type === "meet";
+    const wantZoom = link.meeting_type === "zoom";
 
     // ★予約行を先に INSERT（一意制約 (link_id, start_at, slot_seq) が排他を保証）
     const ins = await insertReservation(
@@ -211,15 +213,30 @@ export function createReserveHandler() {
     let meetUrl: string | null = null;
     let eventId: string | null = null;
     let googleEventId: string | null = null;
+    let zoomMeetingId: string | null = null;
 
     if (!isGroup) {
-      // ==== 1対1: 予約ごとにミラー予定 + Google（Meet） ====
+      // ==== 1対1: 予約ごとにミラー予定 + Web会議（Google Meet / Zoom） ====
+      // Zoom を先に発行（Google 連携の有無に依存しない）
+      if (wantZoom) {
+        const zm = await createZoomMeeting({
+          topic: `${link.title}（${guest.name}様）`,
+          startIso,
+          durationMin: link.duration_min,
+        });
+        if (zm) {
+          meetUrl = zm.joinUrl;
+          zoomMeetingId = zm.meetingId;
+        }
+      }
+
       const descLines = [
         `予約リンク経由で確定`,
         `お名前: ${guest.name}`,
         guest.email ? `メール: ${guest.email}` : null,
         guest.phone ? `電話: ${guest.phone}` : null,
         guest.note ? `備考: ${guest.note}` : null,
+        meetUrl ? `Web会議: ${meetUrl}` : null,
       ].filter(Boolean) as string[];
 
       // アプリ内カレンダーのミラー予定（standalone は null）
@@ -263,11 +280,13 @@ export function createReserveHandler() {
           if (eventId && googleEventId) {
             await calendar.setMirrorGoogleEventId(eventId, googleEventId);
           }
-          meetUrl =
-            res.data.hangoutLink ??
-            res.data.conferenceData?.entryPoints?.find((p) => p.entryPointType === "video")
-              ?.uri ??
-            null;
+          if (wantMeet) {
+            meetUrl =
+              res.data.hangoutLink ??
+              res.data.conferenceData?.entryPoints?.find((p) => p.entryPointType === "video")
+                ?.uri ??
+              null;
+          }
         } catch (e) {
           console.error("booking google sync failed:", (e as Error).message);
         }
@@ -282,11 +301,23 @@ export function createReserveHandler() {
         .single();
 
       if (!seErr && slotEvRow) {
-        // --- 自分が最初の予約者: 共有予定 + Google + Meet を作成 ---
+        // --- 自分が最初の予約者: 共有予定 + Web会議（Google Meet / Zoom）を作成 ---
+        if (wantZoom) {
+          const zm = await createZoomMeeting({
+            topic: `${link.title}（グループ）`,
+            startIso,
+            durationMin: link.duration_min,
+          });
+          if (zm) {
+            meetUrl = zm.joinUrl;
+            zoomMeetingId = zm.meetingId;
+          }
+        }
+
         const mirror = await calendar.createMirrorEvent({
           link,
           title: `${link.title}（グループ）`,
-          description: `予約リンク（グループ）\n参加者:\n・${guest.name}`,
+          description: `予約リンク（グループ）\n参加者:\n・${guest.name}${meetUrl ? `\nWeb会議: ${meetUrl}` : ""}`,
           startIso,
           endIso,
         });
@@ -320,11 +351,13 @@ export function createReserveHandler() {
               },
             });
             googleEventId = res.data.id ?? null;
-            meetUrl =
-              res.data.hangoutLink ??
-              res.data.conferenceData?.entryPoints?.find((p) => p.entryPointType === "video")
-                ?.uri ??
-              null;
+            if (wantMeet) {
+              meetUrl =
+                res.data.hangoutLink ??
+                res.data.conferenceData?.entryPoints?.find((p) => p.entryPointType === "video")
+                  ?.uri ??
+                null;
+            }
           } catch (e) {
             console.error("group google sync failed:", (e as Error).message);
           }
@@ -334,7 +367,12 @@ export function createReserveHandler() {
         }
         await supabase
           .from("booking_slot_events")
-          .update({ event_id: eventId, google_event_id: googleEventId, meet_url: meetUrl })
+          .update({
+            event_id: eventId,
+            google_event_id: googleEventId,
+            meet_url: meetUrl,
+            zoom_meeting_id: zoomMeetingId,
+          })
           .eq("id", slotEvRow.id);
       } else {
         // --- 既に共有予定がある: 参照して参加者を追記 ---
@@ -393,10 +431,15 @@ export function createReserveHandler() {
       }
     }
 
-    // 予約行に event_id / google_event_id / meet_url を反映
+    // 予約行に event_id / google_event_id / meet_url / zoom_meeting_id を反映
     await supabase
       .from("booking_reservations")
-      .update({ event_id: eventId, google_event_id: googleEventId, meet_url: meetUrl })
+      .update({
+        event_id: eventId,
+        google_event_id: googleEventId,
+        meet_url: meetUrl,
+        zoom_meeting_id: zoomMeetingId,
+      })
       .eq("id", reservation.id);
 
     // ベル通知（フック・ベストエフォート）

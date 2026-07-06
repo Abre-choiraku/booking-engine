@@ -44,7 +44,7 @@ export type BookingLink = {
   // hours=営業時間グリッド / ranges=手動範囲 / both=併用 / anytime=終日（Google空きのみ）
   slot_mode: "hours" | "ranges" | "both" | "anytime";
   deadline_at: string | null;
-  meeting_type: "none" | "meet";
+  meeting_type: "none" | "meet" | "zoom";
   cancel_deadline_hours: number;
   // マッチングモード（定員から導出）
   mode: "one_to_one" | "one_to_many";

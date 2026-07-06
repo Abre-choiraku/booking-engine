@@ -69,6 +69,10 @@ export {
 } from "./google/oauth";
 export { encryptToken, decryptToken } from "./google/crypto";
 
+// Zoom 連携（Server-to-Server OAuth）
+export { createZoomMeeting, deleteZoomMeeting } from "./zoom";
+export type { ZoomMeeting } from "./zoom";
+
 // 管理側 repo
 export * as bookingLinks from "./repo/booking-links";
 export * as schedulePolls from "./repo/schedule-polls";
