@@ -68,6 +68,9 @@ export interface CalendarAdapter {
 
   // グループ枠の参加者リスト更新（description 差し替え）。
   updateMirrorDescription(eventId: string, description: string): Promise<void>;
+
+  // ミラー予定を削除（キャンセル時）。
+  deleteMirrorEvent(eventId: string): Promise<void>;
 }
 
 // ---- 予約フック（任意）: ベル通知など副作用の差し込み ----
@@ -83,6 +86,14 @@ export interface ReservationHooks {
     link: BookingLinkRow;
     guestName: string;
     startIso: string;
+  }): Promise<void>;
+  // 日程調整（調整さん風）に回答が入ったとき。
+  onScheduleResponse?(input: {
+    pollTitle: string;
+    createdBy: string;
+    respondentName: string;
+    okCount: number;
+    comment: string | null;
   }): Promise<void>;
 }
 
@@ -113,6 +124,7 @@ const noopCalendar: CalendarAdapter = {
   },
   async setMirrorGoogleEventId() {},
   async updateMirrorDescription() {},
+  async deleteMirrorEvent() {},
 };
 
 let _config: EngineConfig = {};

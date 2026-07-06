@@ -7,6 +7,7 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./api": "./src/api/index.ts",
     "./types": "./src/types.ts",
     "./config": "./src/config.ts",
     "./availability": "./src/core/availability.ts",
@@ -46,6 +47,9 @@
     }
   },
   "devDependencies": {
+    "@types/react": "^18.3.31",
+    "next": "^15.5.20",
+    "react": "^18.3.1",
     "typescript": "^5.9.3"
   }
 }
