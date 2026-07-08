@@ -42,16 +42,19 @@ async function currentOwnerId(): Promise<string | null> {
   }
 }
 
-export async function listBookingLinks(): Promise<BookingLinkWithCounts[]> {
+// ownerId を渡すとその主催者のリンクだけに絞る（マルチテナントのデータ分離）。
+// 省略時は全件（SHEALS ops のチーム全体表示など）。
+export async function listBookingLinks(
+  ownerId?: string,
+): Promise<BookingLinkWithCounts[]> {
   const supabase = anonClient();
   // 案件連携が有効なとき（SHEALS ops）だけ projects を join する。
   const select = projectsEnabled()
     ? "*, project:projects(name), reservations:booking_reservations(count)"
     : "*, reservations:booking_reservations(count)";
-  const { data, error } = await supabase
-    .from("booking_links")
-    .select(select)
-    .order("created_at", { ascending: false });
+  let query = supabase.from("booking_links").select(select);
+  if (ownerId) query = query.eq("owner_user_id", ownerId);
+  const { data, error } = await query.order("created_at", { ascending: false });
   if (error) throw error;
   type Row = BookingLink & {
     project?: { name: string } | null;
@@ -152,21 +155,38 @@ export async function createBookingLink(input: {
   return link;
 }
 
+// 1件取得。ownerId を渡すと所有者一致のときのみ返す（他テナントは null）。
+export async function getBookingLink(
+  id: string,
+  ownerId?: string,
+): Promise<BookingLink | null> {
+  const supabase = anonClient();
+  let query = supabase.from("booking_links").select("*").eq("id", id);
+  if (ownerId) query = query.eq("owner_user_id", ownerId);
+  const { data } = await query.maybeSingle();
+  return (data as BookingLink) ?? null;
+}
+
 export async function setBookingLinkStatus(
   id: string,
   status: "active" | "paused",
+  ownerId?: string,
 ): Promise<void> {
   const supabase = anonClient();
-  const { error } = await supabase
+  let query = supabase
     .from("booking_links")
     .update({ status, updated_at: new Date().toISOString() })
     .eq("id", id);
+  if (ownerId) query = query.eq("owner_user_id", ownerId);
+  const { error } = await query;
   if (error) throw error;
 }
 
-export async function deleteBookingLink(id: string): Promise<void> {
+export async function deleteBookingLink(id: string, ownerId?: string): Promise<void> {
   const supabase = anonClient();
-  const { error } = await supabase.from("booking_links").delete().eq("id", id);
+  let query = supabase.from("booking_links").delete().eq("id", id);
+  if (ownerId) query = query.eq("owner_user_id", ownerId);
+  const { error } = await query;
   if (error) throw error;
 }
 

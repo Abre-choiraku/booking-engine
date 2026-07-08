@@ -50,15 +50,15 @@ function generateToken(): string {
     .replace(/=+$/, "");
 }
 
-export async function listPolls(): Promise<SchedulePollWithCounts[]> {
+// ownerId を渡すとその作成者の調整だけに絞る（マルチテナントのデータ分離）。
+export async function listPolls(ownerId?: string): Promise<SchedulePollWithCounts[]> {
   const supabase = anonClient();
   const select = projectsEnabled()
     ? "*, project:projects(name), slots:schedule_poll_slots(count), responses:schedule_poll_responses(count)"
     : "*, slots:schedule_poll_slots(count), responses:schedule_poll_responses(count)";
-  const { data, error } = await supabase
-    .from("schedule_polls")
-    .select(select)
-    .order("created_at", { ascending: false });
+  let query = supabase.from("schedule_polls").select(select);
+  if (ownerId) query = query.eq("created_by", ownerId);
+  const { data, error } = await query.order("created_at", { ascending: false });
   if (error) throw error;
   type Row = SchedulePoll & {
     project?: { name: string } | null;
@@ -221,8 +221,10 @@ export async function reopenPoll(pollId: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function deletePoll(pollId: string): Promise<void> {
+export async function deletePoll(pollId: string, ownerId?: string): Promise<void> {
   const supabase = anonClient();
-  const { error } = await supabase.from("schedule_polls").delete().eq("id", pollId);
+  let query = supabase.from("schedule_polls").delete().eq("id", pollId);
+  if (ownerId) query = query.eq("created_by", ownerId);
+  const { error } = await query;
   if (error) throw error;
 }
