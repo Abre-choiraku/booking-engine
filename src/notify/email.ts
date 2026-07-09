@@ -1,5 +1,22 @@
 import { serviceClient } from "../config";
 import type { NotifyAdapter, NotifyPayload } from "../config";
+import { getBrand } from "../repo/brands";
+
+// 差出人を組み立てる。屋号（ブランド表示名）があれば表示名に使い、
+// メールアドレス部分は MAIL_FROM（認証済ドメイン）から流用する。
+async function resolveFrom(ownerId: string, fallback?: string): Promise<string | undefined> {
+  const base = fallback ?? process.env.MAIL_FROM ?? "予約 <onboarding@resend.dev>";
+  try {
+    const brand = await getBrand(ownerId);
+    const name = brand?.display_name?.trim();
+    if (!name) return base;
+    const m = base.match(/<([^>]+)>/);
+    const addr = m ? m[1] : base;
+    return `${name} <${addr}>`;
+  } catch {
+    return base;
+  }
+}
 
 // ============================================================
 // 予約メール通知（Resend）— standalone モードの NotifyAdapter
@@ -91,6 +108,7 @@ export function createEmailNotifyAdapter(opts: EmailNotifyOptions = {}): NotifyA
   return {
     async reservationConfirmed(input: NotifyPayload) {
       const when = jstRange(input.startIso, input.endIso);
+      const from = await resolveFrom(input.link.owner_user_id, opts.from);
       // --- 予約者宛 ---
       if (input.guestEmail) {
         const lines: string[] = [];
@@ -114,7 +132,7 @@ export function createEmailNotifyAdapter(opts: EmailNotifyOptions = {}): NotifyA
           input.guestEmail,
           `【ご予約確定】${input.link.title} - ${when}`,
           lines.join("\n"),
-          opts.from,
+          from,
         );
       }
       // --- 主催者宛 ---
@@ -134,13 +152,14 @@ export function createEmailNotifyAdapter(opts: EmailNotifyOptions = {}): NotifyA
           ]
             .filter((v) => v !== null)
             .join("\n"),
-          opts.from,
+          from,
         );
       }
     },
 
     async reservationCancelled(input: NotifyPayload) {
       const when = jstRange(input.startIso, input.endIso);
+      const from = await resolveFrom(input.link.owner_user_id, opts.from);
       if (input.guestEmail) {
         await resendSend(
           input.guestEmail,
@@ -151,7 +170,7 @@ export function createEmailNotifyAdapter(opts: EmailNotifyOptions = {}): NotifyA
             `「${input.link.title}」（${when}）のご予約をキャンセルしました。`,
             "改めてのご予約をご希望の場合は、お手数ですが予約ページから再度お手続きください。",
           ].join("\n"),
-          opts.from,
+          from,
         );
       }
       const ownerEmail = await getOwnerEmail(input.link.owner_user_id);
@@ -164,7 +183,7 @@ export function createEmailNotifyAdapter(opts: EmailNotifyOptions = {}): NotifyA
             "",
             `■ 日時: ${when}（枠は解放されました）`,
           ].join("\n"),
-          opts.from,
+          from,
         );
       }
     },

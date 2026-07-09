@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { anonClient, resolveHooks } from "../config";
+import { getBrand } from "../repo/brands";
 
 // ============================================================
 // 日程調整（調整さん風）公開 API（ログイン不要）
@@ -19,7 +20,7 @@ export function createScheduleDataHandler() {
 
     const { data: poll, error } = await supabase
       .from("schedule_polls")
-      .select("id, title, description, location, status, confirmed_slot_id")
+      .select("id, title, description, location, status, confirmed_slot_id, created_by")
       .eq("token", token)
       .maybeSingle();
     if (error) {
@@ -28,6 +29,7 @@ export function createScheduleDataHandler() {
     if (!poll) {
       return NextResponse.json({ error: "not_found" }, { status: 404 });
     }
+    const brand = poll.created_by ? await getBrand(poll.created_by) : null;
 
     const [slotsRes, respRes] = await Promise.all([
       supabase
@@ -48,6 +50,7 @@ export function createScheduleDataHandler() {
       location: poll.location,
       status: poll.status,
       confirmed_slot_id: poll.confirmed_slot_id,
+      brand,
       slots: slotsRes.data ?? [],
       responses: respRes.data ?? [],
     });

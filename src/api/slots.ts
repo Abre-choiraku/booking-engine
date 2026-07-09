@@ -6,6 +6,7 @@ import {
   fetchConfirmedGuests,
   slotCapacity,
 } from "../core/availability";
+import { getBrand } from "../repo/brands";
 import type { BookingLinkRow } from "../types";
 
 // ============================================================
@@ -35,6 +36,7 @@ export function createSlotsHandler() {
       return NextResponse.json({ error: "not_found" }, { status: 404 });
     }
     const l = link as BookingLinkRow;
+    const brand = await getBrand(l.owner_user_id);
     const deadlinePassed = !!l.deadline_at && Date.now() > Date.parse(l.deadline_at);
     if (l.status !== "active" || deadlinePassed) {
       return NextResponse.json({
@@ -44,6 +46,7 @@ export function createSlotsHandler() {
         duration_min: l.duration_min,
         meeting_type: l.meeting_type,
         status: deadlinePassed ? "closed" : l.status,
+        brand,
         days: [],
       });
     }
@@ -82,6 +85,7 @@ export function createSlotsHandler() {
       phone_mode: l.phone_mode ?? "optional",
       custom_fields: l.custom_fields ?? [],
       status: l.status,
+      brand,
       days: daysWithGuests,
     });
   };
