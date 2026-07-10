@@ -70,7 +70,7 @@ export type BookingLink = {
   mode: "one_to_one" | "one_to_many";
   capacity_per_slot: number;
   // 2本柱化（カレンダー予約 / イベント予約）
-  link_type: "calendar" | "event";
+  link_type: "calendar" | "event" | "salon";
   period_start: string | null; // YYYY-MM-DD（イベント型の期間指定）
   period_end: string | null;
   sync_google_busy: boolean | null; // null = 旧挙動（1対1のみ連動）
@@ -172,6 +172,30 @@ export type SchedulePollSlot = {
   start_at: string; // ISO
   end_at: string; // ISO
   display_order: number;
+};
+
+// ============================================================
+// サロン型: スタッフ / メニュー
+// ============================================================
+export type Staff = {
+  id: string;
+  owner_user_id: string;
+  name: string;
+  display_order: number;
+  active: boolean;
+  created_at?: string;
+};
+
+export type Menu = {
+  id: string;
+  owner_user_id: string;
+  name: string;
+  duration_min: number;
+  price: number | null;
+  description: string | null;
+  display_order: number;
+  active: boolean;
+  created_at?: string;
 };
 
 export type SchedulePollResponse = {

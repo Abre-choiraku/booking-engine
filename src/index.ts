@@ -78,3 +78,5 @@ export * as bookingLinks from "./repo/booking-links";
 export * as schedulePolls from "./repo/schedule-polls";
 export * as brands from "./repo/brands";
 export type { TenantBrand } from "./repo/brands";
+export * as salon from "./repo/salon";
+export type { Staff, Menu } from "./types";
