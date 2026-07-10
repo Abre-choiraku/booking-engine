@@ -49,6 +49,8 @@ export function createSalonInfoHandler() {
       location: link.location,
       meeting_type: link.meeting_type,
       status: link.status,
+      email_mode: link.email_mode ?? "optional",
+      phone_mode: link.phone_mode ?? "optional",
       brand,
       menus: menus.filter((m) => m.active),
       staff: staffWithMenus
