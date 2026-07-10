@@ -89,7 +89,7 @@ export async function createBookingLink(input: {
   meeting_type: "none" | "meet" | "zoom";
   cancel_deadline_hours: number;
   capacity_per_slot: number;
-  link_type: "calendar" | "event";
+  link_type: "calendar" | "event" | "salon";
   period_start?: string | null;
   period_end?: string | null;
   sync_google_busy: boolean;
