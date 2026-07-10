@@ -11,10 +11,11 @@ let _mod: HolidayModule | null = null;
 
 async function load(): Promise<HolidayModule> {
   if (_mod) return _mod;
-  const imported = (await import("japanese-holidays")) as unknown as
-    | HolidayModule
-    | { default: HolidayModule };
-  _mod = "isHoliday" in imported ? imported : imported.default;
+  // 指定子を変数化して型解決を回避（消費側アプリの型チェックでも安定）
+  const spec = "japanese-holidays";
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const imported: any = await import(spec);
+  _mod = (imported.isHoliday ? imported : imported.default) as HolidayModule;
   return _mod;
 }
 
