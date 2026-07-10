@@ -62,6 +62,13 @@ export async function createZoomMeeting(input: {
   const token = await getZoomToken();
   if (!token) return null;
   const host = process.env.ZOOM_HOST_EMAIL || "me";
+  // Zoom は timezone 指定時、start_time に 'Z'(UTC) を付けても
+  // 「時刻部分」をその timezone のローカル時刻として解釈してしまう。
+  // そのため JST のローカル時刻文字列（Z・オフセットなし）で渡す。
+  //   例: UTC 2026-07-13T01:00:00Z → "2026-07-13T10:00:00"（JST 10:00）
+  const jstLocal = new Date(Date.parse(input.startIso) + 9 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 19);
   try {
     const res = await fetch(
       `https://api.zoom.us/v2/users/${encodeURIComponent(host)}/meetings`,
@@ -74,7 +81,7 @@ export async function createZoomMeeting(input: {
         body: JSON.stringify({
           topic: input.topic,
           type: 2, // scheduled meeting
-          start_time: input.startIso,
+          start_time: jstLocal,
           duration: input.durationMin,
           timezone: "Asia/Tokyo",
           settings: {
