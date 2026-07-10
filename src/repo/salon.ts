@@ -79,6 +79,27 @@ export async function getStaff(id: string, ownerId: string): Promise<Staff | nul
 }
 
 // ---- メニュー ----
+// メニュー1件（ownerId 指定でその所有者のもののみ）
+export async function getMenu(id: string, ownerId?: string): Promise<Menu | null> {
+  const supabase = anonClient();
+  let q = supabase.from("menus").select("*").eq("id", id);
+  if (ownerId) q = q.eq("owner_user_id", ownerId);
+  const { data } = await q.maybeSingle();
+  return (data as Menu) ?? null;
+}
+
+// スタッフがそのメニューに対応しているか
+export async function staffHandlesMenu(staffId: string, menuId: string): Promise<boolean> {
+  const supabase = anonClient();
+  const { data } = await supabase
+    .from("staff_menus")
+    .select("staff_id")
+    .eq("staff_id", staffId)
+    .eq("menu_id", menuId)
+    .maybeSingle();
+  return !!data;
+}
+
 export async function listMenus(ownerId: string): Promise<Menu[]> {
   const supabase = anonClient();
   const { data, error } = await supabase

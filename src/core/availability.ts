@@ -162,12 +162,48 @@ export async function collectBusy(
   link: BookingLinkRow,
   fromIso: string,
   toIso: string,
-  opts?: { excludeOwnLink?: boolean },
+  opts?: { excludeOwnLink?: boolean; staffId?: string },
 ): Promise<Busy[]> {
   const supabase = anonClient();
   const calendar = resolveCalendar();
   const busy: Busy[] = [];
   const excludeOwn = opts?.excludeOwnLink ?? false;
+
+  // ---- サロン型: 指定スタッフの busy（そのスタッフの Google + 全予約 + 内部予定）----
+  if (opts?.staffId) {
+    const staffId = opts.staffId;
+    const internal = await calendar.getInternalBusy(staffId, fromIso, toIso);
+    busy.push(...internal);
+    // そのスタッフの確定予約（どのリンク経由でも塞ぐ）
+    const { data: rs } = await supabase
+      .from("booking_reservations")
+      .select("start_at, end_at")
+      .eq("staff_id", staffId)
+      .eq("status", "confirmed")
+      .lt("start_at", toIso)
+      .gt("end_at", fromIso);
+    for (const r of rs ?? []) {
+      busy.push({ start: Date.parse(r.start_at), end: Date.parse(r.end_at) });
+    }
+    // スタッフ本人の Google 予定
+    try {
+      const { getAuthedClientForUser } = await import("../google/oauth");
+      const authed = await getAuthedClientForUser(staffId);
+      if (authed) {
+        const { google } = await import("googleapis");
+        const gcal = google.calendar({ version: "v3", auth: authed });
+        const fb = await gcal.freebusy.query({
+          requestBody: { timeMin: fromIso, timeMax: toIso, items: [{ id: "primary" }] },
+        });
+        for (const p of fb.data.calendars?.primary?.busy ?? []) {
+          if (p.start && p.end) busy.push({ start: Date.parse(p.start), end: Date.parse(p.end) });
+        }
+      }
+    } catch (e) {
+      console.error("staff freebusy failed:", (e as Error).message);
+    }
+    return busy;
+  }
 
   // 自リンク由来の Google イベント ID を集める（Google busy から除外するため）。
   // 1対1は booking_reservations.google_event_id、グループは booking_slot_events.google_event_id に入る。
@@ -658,4 +694,126 @@ export async function fetchConfirmedGuests(
     map.get(t)!.push(r.guest_name);
   }
   return map;
+}
+
+// ============================================================
+// サロン型: スタッフ単位の空き計算
+// ============================================================
+// 店の営業時間(day_hours) + 指定スタッフの Google 予定 + そのスタッフの
+// 全予約 + 手動ロック から、メニュー所要(durationMin)で空き枠を出す。
+export async function computeSalonAvailability(
+  link: BookingLinkRow,
+  opts: { staffId: string; durationMin: number },
+): Promise<DaySlots[]> {
+  const { staffId, durationMin } = opts;
+  const now = Date.now();
+  if (link.deadline_at && now > Date.parse(link.deadline_at)) return [];
+  const noticeLimit = now + link.min_notice_hours * 60 * 60 * 1000;
+  const windowEnd = bookingHorizon(link, now);
+  const step =
+    (link.slot_interval_min && link.slot_interval_min > 0
+      ? link.slot_interval_min
+      : durationMin) *
+    60 *
+    1000;
+  const durMs = durationMin * 60 * 1000;
+  const fromIso = new Date(now).toISOString();
+  const toIso = new Date(windowEnd + 24 * 60 * 60 * 1000).toISOString();
+
+  const busy = await collectBusy(link, fromIso, toIso, { staffId });
+  const locks = await fetchLocks(link.id);
+  const isHoliday = needsHolidayCheck(link) ? await makeHolidayChecker() : () => false;
+  const isLocked = (s: number, e: number) =>
+    locks.some((lk) =>
+      overlaps(s, e, { start: Date.parse(lk.start_at), end: Date.parse(lk.end_at) }),
+    );
+
+  const byDay = new Map<string, Slot[]>();
+  for (const dateStr of hoursDates(link, now)) {
+    for (const { start: ds, end: de } of dateOpenRanges(link, dateStr, isHoliday(dateStr))) {
+      if (Number.isNaN(ds) || Number.isNaN(de)) continue;
+      for (let t = ds; t + durMs <= de; t += step) {
+        if (t < noticeLimit || t > windowEnd) continue;
+        const e = t + durMs;
+        if (busy.some((b) => overlaps(t, e, b))) continue;
+        if (isLocked(t, e)) continue;
+        const d = jstDateStr(new Date(t));
+        if (!byDay.has(d)) byDay.set(d, []);
+        byDay.get(d)!.push({
+          start_at: new Date(t).toISOString(),
+          end_at: new Date(e).toISOString(),
+        });
+      }
+    }
+  }
+  const days: DaySlots[] = [];
+  for (const [d, slots] of [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const dow = new Date(`${d}T12:00:00+09:00`).getUTCDay();
+    days.push({ date: d, weekday: WEEKDAYS[dow], slots });
+  }
+  return days;
+}
+
+// 予約確定時の再検証（サロン型・スタッフ単位）
+export async function isSalonSlotAvailable(
+  link: BookingLinkRow,
+  staffId: string,
+  startAtIso: string,
+  durationMin: number,
+): Promise<{ ok: boolean; reason?: string }> {
+  const startMs = Date.parse(startAtIso);
+  if (Number.isNaN(startMs)) return { ok: false, reason: "日時が不正です" };
+  const endMs = startMs + durationMin * 60 * 1000;
+  const now = Date.now();
+  if (link.deadline_at && now > Date.parse(link.deadline_at)) {
+    return { ok: false, reason: "予約の受付を締め切りました" };
+  }
+  if (startMs < now + link.min_notice_hours * 60 * 60 * 1000) {
+    return { ok: false, reason: "直前の予約はできません。別の枠をお選びください" };
+  }
+  const step =
+    (link.slot_interval_min && link.slot_interval_min > 0
+      ? link.slot_interval_min
+      : durationMin) *
+    60 *
+    1000;
+  const dateStr = jstDateStr(new Date(startMs));
+  const withinHorizon = startMs <= bookingHorizon(link, now);
+  const withinPeriod =
+    !link.period_start ||
+    !link.period_end ||
+    (dateStr >= link.period_start && dateStr <= link.period_end);
+  const isHoliday = needsHolidayCheck(link) ? await makeHolidayChecker() : () => false;
+  let onGrid = false;
+  if (withinHorizon && withinPeriod) {
+    for (const { start: ds, end: de } of dateOpenRanges(link, dateStr, isHoliday(dateStr))) {
+      if (startMs >= ds && endMs <= de && (startMs - ds) % step === 0) {
+        onGrid = true;
+        break;
+      }
+    }
+  }
+  if (!onGrid) return { ok: false, reason: "受付時間外です" };
+
+  const locks = await fetchLocks(link.id);
+  if (
+    locks.some((lk) =>
+      overlaps(startMs, endMs, {
+        start: Date.parse(lk.start_at),
+        end: Date.parse(lk.end_at),
+      }),
+    )
+  ) {
+    return { ok: false, reason: "その枠は受付を停止しています。別の枠をお選びください" };
+  }
+  const busy = await collectBusy(
+    link,
+    new Date(startMs - 1).toISOString(),
+    new Date(endMs + 1).toISOString(),
+    { staffId },
+  );
+  if (busy.some((b) => overlaps(startMs, endMs, b))) {
+    return { ok: false, reason: "その時間はちょうど埋まってしまいました。別の枠をお選びください" };
+  }
+  return { ok: true };
 }

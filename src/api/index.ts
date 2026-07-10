@@ -16,3 +16,8 @@ export {
   createScheduleDataHandler,
   createScheduleRespondHandler,
 } from "./schedule";
+export {
+  createSalonInfoHandler,
+  createSalonSlotsHandler,
+  createSalonReserveHandler,
+} from "./salon";
