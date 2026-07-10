@@ -19,6 +19,16 @@ export type CustomField = {
 // ---- チャネル（Phase 3 の line モードで使用。Phase 1 は 'web' 固定）----
 export type SourceChannel = "web" | "line";
 
+// ---- 曜日別・祝日別の受付時間 ----
+export type TimeRange = { start: string; end: string };
+export type DayHours = {
+  // キー "0"(日)〜"6"(土)。open=false は休み。
+  days: Record<string, { open: boolean; ranges: TimeRange[] }>;
+  // 祝日の扱い: closed=休み / weekday=その曜日と同じ / custom=専用時間帯
+  holidayMode: "closed" | "weekday" | "custom";
+  holiday: TimeRange[]; // holidayMode=custom のとき使用
+};
+
 // ============================================================
 // 予約リンク（TimeRex 風）
 // ============================================================
@@ -46,6 +56,8 @@ export type BookingLink = {
   exclude_holidays?: boolean;
   // 受付時間帯の配列。null/空 = day_start〜day_end 単一帯（後方互換）
   time_ranges?: { start: string; end: string }[] | null;
+  // 曜日別・祝日別の受付時間（最優先。あれば weekdays/time_ranges/exclude_holidays より優先）
+  day_hours?: DayHours | null;
   buffer_min: number;
   min_notice_hours: number;
   status: "active" | "paused";

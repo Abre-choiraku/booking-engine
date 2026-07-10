@@ -83,15 +83,60 @@ function dayTimeRanges(link: BookingLinkRow): { start: string; end: string }[] {
   return [{ start: link.day_start, end: link.day_end }];
 }
 
-// 指定日の受付レンジ（ms）の配列。anytime は終日1本、それ以外は time_ranges 展開。
-function dayRangesMs(link: BookingLinkRow, dateStr: string): { start: number; end: number }[] {
-  if (link.slot_mode === "anytime") {
-    return [dayWindowMs(link, dateStr)];
-  }
-  return dayTimeRanges(link).map((r) => ({
+// （dayRangesMs は dateOpenRanges に統合）
+function rangeToMs(dateStr: string, r: { start: string; end: string }) {
+  return {
     start: Date.parse(`${dateStr}T${r.start}:00+09:00`),
     end: Date.parse(`${dateStr}T${r.end}:00+09:00`),
-  }));
+  };
+}
+
+// 祝日判定が必要か（day_hours の祝日扱いが weekday 以外、または exclude_holidays）
+function needsHolidayCheck(link: BookingLinkRow): boolean {
+  if (link.exclude_holidays) return true;
+  const dh = link.day_hours;
+  return !!dh && dh.holidayMode !== "weekday";
+}
+
+// 指定日に「開いている受付レンジ（ms）」を返す。空配列 = その日は受付なし（休み）。
+// day_hours があれば曜日別・祝日別を最優先。無ければ従来ロジック。
+function dateOpenRanges(
+  link: BookingLinkRow,
+  dateStr: string,
+  isHoliday: boolean,
+): { start: number; end: number }[] {
+  const dow = new Date(`${dateStr}T12:00:00+09:00`).getUTCDay();
+  const dh = link.day_hours;
+
+  if (dh && dh.days) {
+    let open: boolean;
+    let ranges: { start: string; end: string }[];
+    if (isHoliday) {
+      const mode = dh.holidayMode ?? "weekday";
+      if (mode === "closed") return [];
+      if (mode === "custom") {
+        ranges = dh.holiday ?? [];
+        open = link.slot_mode === "anytime" || ranges.length > 0;
+      } else {
+        const c = dh.days[String(dow)];
+        open = !!c?.open;
+        ranges = c?.ranges ?? [];
+      }
+    } else {
+      const c = dh.days[String(dow)];
+      open = !!c?.open;
+      ranges = c?.ranges ?? [];
+    }
+    if (!open) return [];
+    if (link.slot_mode === "anytime") return [dayWindowMs(link, dateStr)];
+    return ranges.filter((r) => r.start && r.end).map((r) => rangeToMs(dateStr, r));
+  }
+
+  // --- 従来ロジック ---
+  if (!enabledWeekday(link, dow)) return [];
+  if (link.exclude_holidays && isHoliday) return [];
+  if (link.slot_mode === "anytime") return [dayWindowMs(link, dateStr)];
+  return dayTimeRanges(link).map((r) => rangeToMs(dateStr, r));
 }
 
 const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
@@ -272,7 +317,7 @@ export async function computeAvailability(
 
   const capacity = slotCapacity(link);
   const syncBusy = effectiveSyncBusy(link);
-  const isHoliday = link.exclude_holidays ? await makeHolidayChecker() : () => false;
+  const isHoliday = needsHolidayCheck(link) ? await makeHolidayChecker() : () => false;
   // 自リンクの予約が作った予定は busy に数えない（数えると予約済み枠が
   // 「他の予定あり」として消え、予約者名が表示されなくなる）
   const busy = syncBusy
@@ -288,12 +333,11 @@ export async function computeAvailability(
   // --- 日付グリッド（hours / both / anytime） ---
   if (usesHoursGrid(link)) {
     for (const dateStr of hoursDates(link, now)) {
-      // JST 正午 = UTC 同日 03:00 なので getUTCDay() が JST の曜日と一致する
-      const dayOfWeek = new Date(`${dateStr}T12:00:00+09:00`).getUTCDay();
-      if (!enabledWeekday(link, dayOfWeek)) continue;
-      if (isHoliday(dateStr)) continue;
-
-      for (const { start: dayStartMs, end: dayEndMs } of dayRangesMs(link, dateStr)) {
+      for (const { start: dayStartMs, end: dayEndMs } of dateOpenRanges(
+        link,
+        dateStr,
+        isHoliday(dateStr),
+      )) {
         if (Number.isNaN(dayStartMs) || Number.isNaN(dayEndMs)) continue;
         for (let t = dayStartMs; t + durMs <= dayEndMs; t += step) {
           if (t < noticeLimit || t > windowEnd) continue;
@@ -376,11 +420,13 @@ export async function isSlotAvailable(
       !link.period_start ||
       !link.period_end ||
       (dateStr >= link.period_start && dateStr <= link.period_end);
-    const dayOfWeek = new Date(`${dateStr}T12:00:00+09:00`).getUTCDay();
-    const isHoliday = link.exclude_holidays ? await makeHolidayChecker() : () => false;
-    const dayOk = enabledWeekday(link, dayOfWeek) && !isHoliday(dateStr);
-    if (withinHorizon && withinPeriod && dayOk) {
-      for (const { start: dayStartMs, end: dayEndMs } of dayRangesMs(link, dateStr)) {
+    const isHoliday = needsHolidayCheck(link) ? await makeHolidayChecker() : () => false;
+    if (withinHorizon && withinPeriod) {
+      for (const { start: dayStartMs, end: dayEndMs } of dateOpenRanges(
+        link,
+        dateStr,
+        isHoliday(dateStr),
+      )) {
         if (Number.isNaN(dayStartMs) || Number.isNaN(dayEndMs)) continue;
         if (
           startMs >= dayStartMs &&
@@ -516,14 +562,15 @@ export async function enumerateSlotsForManagement(
   }
 
   // 候補生成（computeAvailability と同じロジック）
-  const isHoliday = link.exclude_holidays ? await makeHolidayChecker() : () => false;
+  const isHoliday = needsHolidayCheck(link) ? await makeHolidayChecker() : () => false;
   const candidateStarts = new Map<number, number>();
   if (usesHoursGrid(link)) {
     for (const dateStr of hoursDates(link, now)) {
-      const dayOfWeek = new Date(`${dateStr}T12:00:00+09:00`).getUTCDay();
-      if (!enabledWeekday(link, dayOfWeek)) continue;
-      if (isHoliday(dateStr)) continue;
-      for (const { start: dayStartMs, end: dayEndMs } of dayRangesMs(link, dateStr)) {
+      for (const { start: dayStartMs, end: dayEndMs } of dateOpenRanges(
+        link,
+        dateStr,
+        isHoliday(dateStr),
+      )) {
         if (Number.isNaN(dayStartMs) || Number.isNaN(dayEndMs)) continue;
         for (let t = dayStartMs; t + durMs <= dayEndMs; t += step) {
           if (t < now || t > windowEnd) continue;
