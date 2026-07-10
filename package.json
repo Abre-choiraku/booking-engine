@@ -30,7 +30,8 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.110.0",
     "@types/node": "^26.1.0",
-    "googleapis": "^144.0.0"
+    "googleapis": "^144.0.0",
+    "japanese-holidays": "^1.0.10"
   },
   "peerDependencies": {
     "@supabase/ssr": "*",

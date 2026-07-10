@@ -78,6 +78,9 @@ export async function createBookingLink(input: {
   day_start: string;
   day_end: string;
   exclude_weekends: boolean;
+  weekdays?: number[] | null;
+  exclude_holidays?: boolean;
+  time_ranges?: { start: string; end: string }[] | null;
   min_notice_hours: number;
   slot_mode: "hours" | "ranges" | "both" | "anytime";
   deadline_at?: string | null;
@@ -114,6 +117,9 @@ export async function createBookingLink(input: {
       day_start: input.day_start,
       day_end: input.day_end,
       exclude_weekends: input.exclude_weekends,
+      weekdays: input.weekdays ?? null,
+      exclude_holidays: input.exclude_holidays ?? false,
+      time_ranges: input.time_ranges ?? null,
       min_notice_hours: input.min_notice_hours,
       slot_mode: input.slot_mode,
       deadline_at: input.deadline_at ?? null,

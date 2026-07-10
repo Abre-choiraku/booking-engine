@@ -38,6 +38,12 @@ export type BookingLink = {
   day_start: string; // "10:00"
   day_end: string; // "18:00"
   exclude_weekends: boolean;
+  // 受付する曜日（0=日〜6=土）。null/空 = exclude_weekends に従う（後方互換）
+  weekdays?: number[] | null;
+  // 日本の祝日を除外するか
+  exclude_holidays?: boolean;
+  // 受付時間帯の配列。null/空 = day_start〜day_end 単一帯（後方互換）
+  time_ranges?: { start: string; end: string }[] | null;
   buffer_min: number;
   min_notice_hours: number;
   status: "active" | "paused";
