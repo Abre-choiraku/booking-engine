@@ -59,6 +59,13 @@ function dayWindowMs(link: BookingLinkRow, dateStr: string): { start: number; en
   };
 }
 
+// 枠の開始間隔（ms）。slot_interval_min があればそれ、無ければ所要+buffer（従来）。
+function slotStepMs(link: BookingLinkRow): number {
+  const iv = link.slot_interval_min;
+  const base = iv && iv > 0 ? iv : link.duration_min + link.buffer_min;
+  return Math.max(1, base) * 60 * 1000;
+}
+
 // 受付する曜日か（0=日〜6=土）。weekdays が指定されていればそれに従い、
 // 無ければ従来の exclude_weekends（土日除外）に従う。
 function enabledWeekday(link: BookingLinkRow, dow: number): boolean {
@@ -251,7 +258,7 @@ export async function computeAvailability(
 
   const noticeLimit = now + link.min_notice_hours * 60 * 60 * 1000;
   const windowEnd = bookingHorizon(link, now);
-  const step = (link.duration_min + link.buffer_min) * 60 * 1000;
+  const step = slotStepMs(link);
   const durMs = link.duration_min * 60 * 1000;
 
   // busy 取得範囲は「グリッド上限」と「手動範囲の最遠」を包含させる
@@ -358,7 +365,7 @@ export async function isSlotAvailable(
   if (startMs < now + link.min_notice_hours * 60 * 60 * 1000) {
     return { ok: false, reason: "直前の予約はできません。別の枠をお選びください" };
   }
-  const step = (link.duration_min + link.buffer_min) * 60 * 1000;
+  const step = slotStepMs(link);
 
   // グリッド整合: 日付グリッド上 or 手動範囲上のどちらかに乗っていること
   let onGrid = false;
@@ -475,7 +482,7 @@ export async function enumerateSlotsForManagement(
 ): Promise<ManagedDay[]> {
   const now = Date.now();
   const windowEnd = bookingHorizon(link, now);
-  const step = (link.duration_min + link.buffer_min) * 60 * 1000;
+  const step = slotStepMs(link);
   const durMs = link.duration_min * 60 * 1000;
   const capacity = slotCapacity(link);
   const isGroup = capacity > 1;

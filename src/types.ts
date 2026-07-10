@@ -34,6 +34,8 @@ export type BookingLink = {
   project_id: string | null;
   owner_user_id: string;
   duration_min: number;
+  // 枠の開始間隔（分）。null/0 = duration_min + buffer_min ごと（従来）
+  slot_interval_min?: number | null;
   window_days: number;
   day_start: string; // "10:00"
   day_end: string; // "18:00"

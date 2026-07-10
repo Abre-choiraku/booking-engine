@@ -74,6 +74,7 @@ export async function createBookingLink(input: {
   location?: string | null;
   project_id?: string | null;
   duration_min: number;
+  slot_interval_min?: number | null;
   window_days: number;
   day_start: string;
   day_end: string;
@@ -113,6 +114,7 @@ export async function createBookingLink(input: {
       project_id: input.project_id ?? null,
       owner_user_id: ownerId,
       duration_min: input.duration_min,
+      slot_interval_min: input.slot_interval_min ?? null,
       window_days: input.window_days,
       day_start: input.day_start,
       day_end: input.day_end,
