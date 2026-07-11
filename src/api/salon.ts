@@ -16,6 +16,26 @@ import type { BookingLinkRow } from "../types";
 // サロン型 公開 API（メニュー→スタッフ→時間→確定）
 // ============================================================
 
+// メニュー + 選択オプションから 合計所要(分)・合計料金・有効オプションを求める
+async function resolveTotals(
+  ownerId: string,
+  menu: { id: string; duration_min: number; price: number | null },
+  optionIdsParam: string | null,
+) {
+  const ids = (optionIdsParam ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const opts =
+    ids.length > 0
+      ? (await salon.getOptionsByIds(ownerId, ids)).filter((o) => o.menu_id === menu.id)
+      : [];
+  const durationMin =
+    menu.duration_min + opts.reduce((s, o) => s + (o.duration_min || 0), 0);
+  const price = (menu.price ?? 0) + opts.reduce((s, o) => s + (o.price ?? 0), 0);
+  return { durationMin, price, options: opts };
+}
+
 async function loadSalonLink(token: string): Promise<BookingLinkRow | null> {
   const supabase = anonClient();
   const { data } = await supabase
@@ -43,6 +63,8 @@ export function createSalonInfoHandler() {
       salon.listStaffWithMenus(link.owner_user_id),
       getBrand(link.owner_user_id),
     ]);
+    const activeMenus = menus.filter((m) => m.active);
+    const optionsByMenu = await salon.listOptionsForMenus(activeMenus.map((m) => m.id));
     return NextResponse.json({
       title: link.title,
       description: link.description,
@@ -52,10 +74,19 @@ export function createSalonInfoHandler() {
       email_mode: link.email_mode ?? "optional",
       phone_mode: link.phone_mode ?? "optional",
       brand,
-      menus: menus.filter((m) => m.active),
+      menus: activeMenus.map((m) => ({
+        id: m.id,
+        parent_id: m.parent_id,
+        name: m.name,
+        duration_min: m.duration_min,
+        price: m.price,
+        description: m.description,
+        image_url: m.image_url,
+        options: optionsByMenu.get(m.id) ?? [],
+      })),
       staff: staffWithMenus
         .filter((s) => s.active)
-        .map((s) => ({ id: s.id, name: s.name, menu_ids: s.menu_ids })),
+        .map((s) => ({ id: s.id, name: s.name, image_url: s.image_url, menu_ids: s.menu_ids })),
     });
   };
 }
@@ -69,27 +100,24 @@ export function createSalonSlotsHandler() {
     const { token } = await params;
     const menuId = req.nextUrl.searchParams.get("menuId") ?? "";
     const staffId = req.nextUrl.searchParams.get("staffId") ?? "";
+    const optionIds = req.nextUrl.searchParams.get("optionIds");
     const link = await loadSalonLink(token);
     if (!link || link.link_type !== "salon" || link.status !== "active") {
       return NextResponse.json({ error: "not_found" }, { status: 404 });
     }
     const menu = await salon.getMenu(menuId, link.owner_user_id);
     if (!menu) return NextResponse.json({ error: "メニューが不正です" }, { status: 400 });
+    const { durationMin } = await resolveTotals(link.owner_user_id, menu, optionIds);
 
     if (staffId) {
-      const days = await computeSalonAvailability(link, {
-        staffId,
-        durationMin: menu.duration_min,
-      });
-      return NextResponse.json({ duration_min: menu.duration_min, days });
+      const days = await computeSalonAvailability(link, { staffId, durationMin });
+      return NextResponse.json({ duration_min: durationMin, days });
     }
 
     // おまかせ: 対応スタッフの空きを合算（どれか空いていれば予約可）
     const staffList = await salon.listStaffForMenu(link.owner_user_id, menuId);
     const perStaff = await Promise.all(
-      staffList.map((s) =>
-        computeSalonAvailability(link, { staffId: s.id, durationMin: menu.duration_min }),
-      ),
+      staffList.map((s) => computeSalonAvailability(link, { staffId: s.id, durationMin })),
     );
     const union = new Map<string, { date: string; weekday: string; slots: Set<string> }>();
     perStaff.forEach((days) => {
@@ -98,7 +126,7 @@ export function createSalonSlotsHandler() {
         for (const s of d.slots) union.get(d.date)!.slots.add(s.start_at);
       }
     });
-    const durMs = menu.duration_min * 60 * 1000;
+    const durMs = durationMin * 60 * 1000;
     const days = [...union.values()]
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((d) => ({
@@ -111,7 +139,39 @@ export function createSalonSlotsHandler() {
             end_at: new Date(Date.parse(iso) + durMs).toISOString(),
           })),
       }));
-    return NextResponse.json({ duration_min: menu.duration_min, days });
+    return NextResponse.json({ duration_min: durationMin, days });
+  };
+}
+
+// ---- スタッフ×日 の空き一覧プレビュー: ?menuId=&optionIds= ----
+export function createSalonOverviewHandler() {
+  return async function GET(
+    req: NextRequest,
+    { params }: { params: Promise<{ token: string }> },
+  ) {
+    const { token } = await params;
+    const menuId = req.nextUrl.searchParams.get("menuId") ?? "";
+    const optionIds = req.nextUrl.searchParams.get("optionIds");
+    const link = await loadSalonLink(token);
+    if (!link || link.link_type !== "salon" || link.status !== "active") {
+      return NextResponse.json({ error: "not_found" }, { status: 404 });
+    }
+    const menu = await salon.getMenu(menuId, link.owner_user_id);
+    if (!menu) return NextResponse.json({ error: "メニューが不正です" }, { status: 400 });
+    const { durationMin } = await resolveTotals(link.owner_user_id, menu, optionIds);
+    const staffList = await salon.listStaffForMenu(link.owner_user_id, menuId);
+    const perStaff = await Promise.all(
+      staffList.map(async (s) => {
+        const days = await computeSalonAvailability(link, { staffId: s.id, durationMin });
+        return {
+          id: s.id,
+          name: s.name,
+          image_url: s.image_url,
+          days: days.map((d) => ({ date: d.date, weekday: d.weekday, count: d.slots.length })),
+        };
+      }),
+    );
+    return NextResponse.json({ duration_min: durationMin, staff: perStaff });
   };
 }
 
@@ -136,6 +196,7 @@ export function createSalonReserveHandler() {
     let body: {
       menuId?: string;
       staffId?: string;
+      optionIds?: string[];
       start_at?: string;
       name?: string;
       email?: string;
@@ -182,13 +243,19 @@ export function createSalonReserveHandler() {
 
     const menu = await salon.getMenu(body.menuId ?? "", link.owner_user_id);
     if (!menu) return NextResponse.json({ error: "メニューが不正です" }, { status: 400 });
+    const optionIdsCsv = Array.isArray(body.optionIds) ? body.optionIds.join(",") : null;
+    const { durationMin, price: totalPrice, options } = await resolveTotals(
+      link.owner_user_id,
+      menu,
+      optionIdsCsv,
+    );
     const startAt = body.start_at ?? "";
     const startMs = Date.parse(startAt);
     if (Number.isNaN(startMs)) {
       return NextResponse.json({ error: "日時が不正です" }, { status: 400 });
     }
     const startIso = new Date(startMs).toISOString();
-    const endIso = new Date(startMs + menu.duration_min * 60 * 1000).toISOString();
+    const endIso = new Date(startMs + durationMin * 60 * 1000).toISOString();
 
     // 担当スタッフの決定（指定 or おまかせ）
     let staffId = (body.staffId ?? "").trim();
@@ -196,14 +263,14 @@ export function createSalonReserveHandler() {
       if (!(await salon.staffHandlesMenu(staffId, menu.id))) {
         return NextResponse.json({ error: "このスタッフはそのメニューに対応していません" }, { status: 400 });
       }
-      const check = await isSalonSlotAvailable(link, staffId, startAt, menu.duration_min);
+      const check = await isSalonSlotAvailable(link, staffId, startAt, durationMin);
       if (!check.ok) return NextResponse.json({ error: check.reason }, { status: 409 });
     } else {
       // おまかせ: 対応スタッフから空いている人を選ぶ
       const staffList = await salon.listStaffForMenu(link.owner_user_id, menu.id);
       let picked = "";
       for (const s of staffList) {
-        const check = await isSalonSlotAvailable(link, s.id, startAt, menu.duration_min);
+        const check = await isSalonSlotAvailable(link, s.id, startAt, durationMin);
         if (check.ok) {
           picked = s.id;
           break;
@@ -234,6 +301,8 @@ export function createSalonReserveHandler() {
         guest_phone: guest.phone || null,
         guest_note: guest.note || null,
         custom_answers: body.custom_answers ?? {},
+        option_ids: options.map((o) => o.id),
+        total_price: totalPrice,
         status: "confirmed",
         cancel_token: cancelToken,
       })
@@ -264,7 +333,7 @@ export function createSalonReserveHandler() {
       const zm = await createZoomMeeting({
         topic: `${menu.name}（${guest.name}様）`,
         startIso,
-        durationMin: menu.duration_min,
+        durationMin,
       });
       if (zm) {
         meetUrl = zm.joinUrl;
@@ -329,7 +398,7 @@ export function createSalonReserveHandler() {
         guestName: guest.name,
         guestEmail: guest.email || null,
         startIso,
-        durationMin: menu.duration_min,
+        durationMin,
       });
     } catch (e) {
       console.error("salon reserve hook failed:", (e as Error).message);

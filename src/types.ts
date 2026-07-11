@@ -181,6 +181,7 @@ export type Staff = {
   id: string;
   owner_user_id: string;
   name: string;
+  image_url: string | null;
   display_order: number;
   active: boolean;
   created_at?: string;
@@ -189,12 +190,25 @@ export type Staff = {
 export type Menu = {
   id: string;
   owner_user_id: string;
+  parent_id: string | null; // 親カテゴリ（null=トップ）。子を持てばカテゴリ、無ければ予約可能
   name: string;
   duration_min: number;
   price: number | null;
   description: string | null;
+  image_url: string | null;
   display_order: number;
   active: boolean;
+  created_at?: string;
+};
+
+export type MenuOption = {
+  id: string;
+  owner_user_id: string;
+  menu_id: string;
+  name: string;
+  price: number | null;
+  duration_min: number; // 追加時間
+  display_order: number;
   created_at?: string;
 };
 

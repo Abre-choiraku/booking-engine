@@ -19,5 +19,6 @@ export {
 export {
   createSalonInfoHandler,
   createSalonSlotsHandler,
+  createSalonOverviewHandler,
   createSalonReserveHandler,
 } from "./salon";
