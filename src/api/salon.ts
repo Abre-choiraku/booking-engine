@@ -401,11 +401,12 @@ export function createSalonReserveHandler() {
         break;
       }
       lastErrCode = error?.code;
-      if (error?.code === "23505") continue; // この候補は直前に埋まった → 次へ
+      // 23505=一意制約 / 23P01=排他制約（同一スタッフ時間帯重なり）= この候補は埋まった → 次へ
+      if (error?.code === "23505" || error?.code === "23P01") continue;
       break; // その他のエラーは中断
     }
     if (!reservation) {
-      if (lastErrCode === "23505") {
+      if (lastErrCode === "23505" || lastErrCode === "23P01") {
         return NextResponse.json(
           { error: "その枠は直前に埋まりました。別の枠をお選びください" },
           { status: 409 },
@@ -590,7 +591,7 @@ export async function createSalonAdminReservation(
     .select()
     .single();
   if (insErr || !reservation) {
-    if (insErr?.code === "23505") {
+    if (insErr?.code === "23505" || insErr?.code === "23P01") {
       return { ok: false, error: "その枠は既に予約が入っています" };
     }
     return { ok: false, error: `予約の登録に失敗しました: ${insErr?.message ?? ""}` };
