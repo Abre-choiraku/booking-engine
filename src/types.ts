@@ -214,6 +214,8 @@ export type MenuOption = {
   price: number | null;
   duration_min: number; // 追加時間
   display_order: number;
+  // 既存メニューを参照するオプション（一元管理）。null=手入力オプション
+  linked_menu_id?: string | null;
   created_at?: string;
 };
 

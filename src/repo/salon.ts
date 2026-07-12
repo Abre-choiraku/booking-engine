@@ -198,6 +198,33 @@ export async function deleteMenu(id: string, ownerId: string): Promise<void> {
 }
 
 // ---- メニューオプション ----
+
+// linked_menu_id を持つオプションは、参照先メニューの現在の名前/料金/所要で上書きする
+// （＝一元管理。参照先を編集するとオプションも連動）。参照先が消えていればスナップショットのまま。
+async function resolveLinkedOptions(
+  supabase: ReturnType<typeof anonClient>,
+  options: MenuOption[],
+): Promise<MenuOption[]> {
+  const linkedIds = [...new Set(options.map((o) => o.linked_menu_id).filter(Boolean))] as string[];
+  if (linkedIds.length === 0) return options;
+  const { data } = await supabase
+    .from("menus")
+    .select("id, name, price, duration_min")
+    .in("id", linkedIds);
+  const map = new Map(
+    ((data ?? []) as { id: string; name: string; price: number | null; duration_min: number }[]).map(
+      (m) => [m.id, m] as const,
+    ),
+  );
+  return options.map((o) => {
+    if (o.linked_menu_id) {
+      const m = map.get(o.linked_menu_id);
+      if (m) return { ...o, name: m.name, price: m.price, duration_min: m.duration_min };
+    }
+    return o;
+  });
+}
+
 export async function listOptions(menuId: string): Promise<MenuOption[]> {
   const supabase = anonClient();
   const { data } = await supabase
@@ -206,7 +233,7 @@ export async function listOptions(menuId: string): Promise<MenuOption[]> {
     .eq("menu_id", menuId)
     .order("display_order", { ascending: true })
     .order("created_at", { ascending: true });
-  return (data ?? []) as MenuOption[];
+  return resolveLinkedOptions(supabase, (data ?? []) as MenuOption[]);
 }
 
 // 複数メニューのオプションをまとめて取得（menu_id -> options）
@@ -221,7 +248,8 @@ export async function listOptionsForMenus(
     .select("*")
     .in("menu_id", menuIds)
     .order("display_order", { ascending: true });
-  for (const o of (data ?? []) as MenuOption[]) {
+  const resolved = await resolveLinkedOptions(supabase, (data ?? []) as MenuOption[]);
+  for (const o of resolved) {
     if (!map.has(o.menu_id)) map.set(o.menu_id, []);
     map.get(o.menu_id)!.push(o);
   }
@@ -242,6 +270,30 @@ export async function createOption(input: {
     name: input.name,
     price: input.price ?? null,
     duration_min: input.durationMin ?? 0,
+  });
+  if (error) throw error;
+}
+
+// 既存メニューをオプションとして紐付ける（名前/料金/所要は表示時に参照先から解決）
+export async function createLinkedOption(input: {
+  ownerId: string;
+  menuId: string;
+  linkedMenuId: string;
+}): Promise<void> {
+  const supabase = anonClient();
+  if (input.linkedMenuId === input.menuId) {
+    throw new Error("同じメニューは紐付けできません");
+  }
+  const target = await getMenu(input.linkedMenuId, input.ownerId);
+  if (!target) throw new Error("紐付けるメニューが見つかりません");
+  const { error } = await supabase.from("menu_options").insert({
+    owner_user_id: input.ownerId,
+    menu_id: input.menuId,
+    linked_menu_id: input.linkedMenuId,
+    // スナップショット（参照先削除時のフォールバック用）
+    name: target.name,
+    price: target.price,
+    duration_min: target.duration_min,
   });
   if (error) throw error;
 }
@@ -287,7 +339,7 @@ export async function getOptionsByIds(
     .select("*")
     .eq("owner_user_id", ownerId)
     .in("id", ids);
-  return (data ?? []) as MenuOption[];
+  return resolveLinkedOptions(supabase, (data ?? []) as MenuOption[]);
 }
 
 // ---- スタッフ×メニュー 紐づけ ----
