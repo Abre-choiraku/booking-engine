@@ -82,3 +82,5 @@ export * as salon from "./repo/salon";
 export type { Staff, Menu } from "./types";
 export * as owners from "./repo/owners";
 export type { OwnerUser } from "./repo/owners";
+export * as reservations from "./repo/reservations";
+export type { OwnerReservation } from "./repo/reservations";

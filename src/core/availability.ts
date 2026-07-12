@@ -517,7 +517,31 @@ export async function isSlotAvailable(
     };
   }
 
-  // Google/アプリ予定との空き連動（選択制）
+  // 定員1: 自リンクの既存予約と時間が重なる枠は不可にする。
+  // （開始間隔 < 所要 で枠が重なる設定のとき、同一開始時刻でないと一意制約が
+  //  効かず重複予約できてしまうのを防ぐ。fetchConfirmedCounts は同一開始のみ判定）
+  if (capacity <= 1) {
+    const supabase = anonClient();
+    const { data: own } = await supabase
+      .from("booking_reservations")
+      .select("start_at, end_at")
+      .eq("link_id", link.id)
+      .eq("status", "confirmed")
+      .lt("start_at", new Date(endMs).toISOString())
+      .gt("end_at", new Date(startMs).toISOString());
+    for (const r of own ?? []) {
+      if (
+        overlaps(startMs, endMs, {
+          start: Date.parse(r.start_at),
+          end: Date.parse(r.end_at),
+        })
+      ) {
+        return { ok: false, reason: "その枠はちょうど埋まってしまいました。別の枠をお選びください" };
+      }
+    }
+  }
+
+  // Google/アプリ予定との空き連動（選択制。自リンクの予定は上で判定済みのため除外）
   if (effectiveSyncBusy(link)) {
     const busy = await collectBusy(
       link,

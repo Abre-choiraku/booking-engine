@@ -157,6 +157,14 @@ export function createSalonSlotsHandler() {
     const { durationMin } = await resolveTotals(link.owner_user_id, menu, optionIds);
 
     if (staffId) {
+      // スタッフがそのメニューに対応し、かつこのリンクで許可されているか検証
+      const staffAllow = allowedStaffIdSet(link);
+      if (
+        !(await salon.staffHandlesMenu(staffId, menuId)) ||
+        (staffAllow && !staffAllow.has(staffId))
+      ) {
+        return NextResponse.json({ error: "スタッフが不正です" }, { status: 400 });
+      }
       const st = await salon.getStaff(staffId, link.owner_user_id);
       const days = await computeSalonAvailability(link, {
         staffId,
