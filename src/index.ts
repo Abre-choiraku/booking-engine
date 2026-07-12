@@ -80,3 +80,5 @@ export * as brands from "./repo/brands";
 export type { TenantBrand } from "./repo/brands";
 export * as salon from "./repo/salon";
 export type { Staff, Menu } from "./types";
+export * as owners from "./repo/owners";
+export type { OwnerUser } from "./repo/owners";

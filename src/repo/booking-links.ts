@@ -90,6 +90,8 @@ export async function createBookingLink(input: {
   cancel_deadline_hours: number;
   capacity_per_slot: number;
   link_type: "calendar" | "event" | "salon";
+  salon_menu_ids?: string[] | null;
+  salon_staff_ids?: string[] | null;
   period_start?: string | null;
   period_end?: string | null;
   sync_google_busy: boolean;
@@ -133,6 +135,8 @@ export async function createBookingLink(input: {
       mode: input.capacity_per_slot > 1 ? "one_to_many" : "one_to_one",
       capacity_per_slot: Math.max(1, input.capacity_per_slot),
       link_type: input.link_type,
+      salon_menu_ids: input.salon_menu_ids ?? null,
+      salon_staff_ids: input.salon_staff_ids ?? null,
       period_start: input.period_start ?? null,
       period_end: input.period_end ?? null,
       sync_google_busy: input.sync_google_busy,
@@ -202,6 +206,8 @@ export async function updateBookingLink(
     cancel_deadline_hours: number;
     capacity_per_slot: number;
     link_type: "calendar" | "event" | "salon";
+    salon_menu_ids?: string[] | null;
+    salon_staff_ids?: string[] | null;
     period_start?: string | null;
     period_end?: string | null;
     sync_google_busy: boolean;
@@ -239,6 +245,8 @@ export async function updateBookingLink(
       mode: input.capacity_per_slot > 1 ? "one_to_many" : "one_to_one",
       capacity_per_slot: Math.max(1, input.capacity_per_slot),
       link_type: input.link_type,
+      salon_menu_ids: input.salon_menu_ids ?? null,
+      salon_staff_ids: input.salon_staff_ids ?? null,
       period_start: input.period_start ?? null,
       period_end: input.period_end ?? null,
       sync_google_busy: input.sync_google_busy,

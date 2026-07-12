@@ -47,6 +47,42 @@ async function loadSalonLink(token: string): Promise<BookingLinkRow | null> {
   return data as BookingLinkRow;
 }
 
+// リンクの salon_staff_ids（あれば）で許可スタッフを絞る集合。null=制限なし
+function allowedStaffIdSet(link: BookingLinkRow): Set<string> | null {
+  const ids = link.salon_staff_ids;
+  return ids && ids.length > 0 ? new Set(ids) : null;
+}
+
+// リンクの salon_menu_ids（あれば）から「表示してよいメニューID集合」を作る。
+// 選択された末端メニュー + その祖先カテゴリを含める。null=制限なし
+function allowedMenuIdSet(
+  link: BookingLinkRow,
+  allMenus: { id: string; parent_id: string | null }[],
+): Set<string> | null {
+  const ids = link.salon_menu_ids;
+  if (!ids || ids.length === 0) return null;
+  const byId = new Map(allMenus.map((m) => [m.id, m]));
+  const set = new Set<string>();
+  for (const id of ids) {
+    let cur = byId.get(id);
+    while (cur && !set.has(cur.id)) {
+      set.add(cur.id);
+      cur = cur.parent_id ? byId.get(cur.parent_id) : undefined;
+    }
+  }
+  return set;
+}
+
+// おまかせ/一覧で使う「このリンクで有効な対応スタッフ」（メニュー対応 ∩ リンク許可）
+async function staffForLinkMenu(
+  link: BookingLinkRow,
+  menuId: string,
+): Promise<import("../types").Staff[]> {
+  const list = await salon.listStaffForMenu(link.owner_user_id, menuId);
+  const allow = allowedStaffIdSet(link);
+  return allow ? list.filter((s) => allow.has(s.id)) : list;
+}
+
 // ---- 情報取得: メニュー・スタッフ一覧 ----
 export function createSalonInfoHandler() {
   return async function GET(
@@ -63,7 +99,12 @@ export function createSalonInfoHandler() {
       salon.listStaffWithMenus(link.owner_user_id),
       getBrand(link.owner_user_id),
     ]);
-    const activeMenus = menus.filter((m) => m.active);
+    // リンクごとの絞り込み（未設定なら全部）
+    const menuAllow = allowedMenuIdSet(link, menus);
+    const staffAllow = allowedStaffIdSet(link);
+    const activeMenus = menus.filter(
+      (m) => m.active && (!menuAllow || menuAllow.has(m.id)),
+    );
     const optionsByMenu = await salon.listOptionsForMenus(activeMenus.map((m) => m.id));
     return NextResponse.json({
       title: link.title,
@@ -85,8 +126,14 @@ export function createSalonInfoHandler() {
         options: optionsByMenu.get(m.id) ?? [],
       })),
       staff: staffWithMenus
-        .filter((s) => s.active)
-        .map((s) => ({ id: s.id, name: s.name, image_url: s.image_url, menu_ids: s.menu_ids })),
+        .filter((s) => s.active && (!staffAllow || staffAllow.has(s.id)))
+        .map((s) => ({
+          id: s.id,
+          name: s.name,
+          image_url: s.image_url,
+          // 対応メニューもリンク許可メニューに intersect（スタッフ先フローの整合）
+          menu_ids: menuAllow ? s.menu_ids.filter((id) => menuAllow.has(id)) : s.menu_ids,
+        })),
     });
   };
 }
@@ -110,14 +157,25 @@ export function createSalonSlotsHandler() {
     const { durationMin } = await resolveTotals(link.owner_user_id, menu, optionIds);
 
     if (staffId) {
-      const days = await computeSalonAvailability(link, { staffId, durationMin });
+      const st = await salon.getStaff(staffId, link.owner_user_id);
+      const days = await computeSalonAvailability(link, {
+        staffId,
+        durationMin,
+        staffDayHours: st?.day_hours ?? null,
+      });
       return NextResponse.json({ duration_min: durationMin, days });
     }
 
-    // おまかせ: 対応スタッフの空きを合算（どれか空いていれば予約可）
-    const staffList = await salon.listStaffForMenu(link.owner_user_id, menuId);
+    // おまかせ: 対応スタッフ（リンク許可内）の空きを合算（どれか空いていれば予約可）
+    const staffList = await staffForLinkMenu(link, menuId);
     const perStaff = await Promise.all(
-      staffList.map((s) => computeSalonAvailability(link, { staffId: s.id, durationMin })),
+      staffList.map((s) =>
+        computeSalonAvailability(link, {
+          staffId: s.id,
+          durationMin,
+          staffDayHours: s.day_hours ?? null,
+        }),
+      ),
     );
     const union = new Map<string, { date: string; weekday: string; slots: Set<string> }>();
     perStaff.forEach((days) => {
@@ -159,10 +217,14 @@ export function createSalonOverviewHandler() {
     const menu = await salon.getMenu(menuId, link.owner_user_id);
     if (!menu) return NextResponse.json({ error: "メニューが不正です" }, { status: 400 });
     const { durationMin } = await resolveTotals(link.owner_user_id, menu, optionIds);
-    const staffList = await salon.listStaffForMenu(link.owner_user_id, menuId);
+    const staffList = await staffForLinkMenu(link, menuId);
     const perStaff = await Promise.all(
       staffList.map(async (s) => {
-        const days = await computeSalonAvailability(link, { staffId: s.id, durationMin });
+        const days = await computeSalonAvailability(link, {
+          staffId: s.id,
+          durationMin,
+          staffDayHours: s.day_hours ?? null,
+        });
         return {
           id: s.id,
           name: s.name,
@@ -243,6 +305,12 @@ export function createSalonReserveHandler() {
 
     const menu = await salon.getMenu(body.menuId ?? "", link.owner_user_id);
     if (!menu) return NextResponse.json({ error: "メニューが不正です" }, { status: 400 });
+    // リンクのメニュー絞り込み（許可外は拒否）
+    const allMenus = await salon.listMenus(link.owner_user_id);
+    const menuAllow = allowedMenuIdSet(link, allMenus);
+    if (menuAllow && !menuAllow.has(menu.id)) {
+      return NextResponse.json({ error: "このメニューは現在選べません" }, { status: 400 });
+    }
     const optionIdsCsv = Array.isArray(body.optionIds) ? body.optionIds.join(",") : null;
     const { durationMin, price: totalPrice, options } = await resolveTotals(
       link.owner_user_id,
@@ -258,19 +326,28 @@ export function createSalonReserveHandler() {
     const endIso = new Date(startMs + durationMin * 60 * 1000).toISOString();
 
     // 担当スタッフの決定（指定 or おまかせ）
+    const staffAllow = allowedStaffIdSet(link);
     let staffId = (body.staffId ?? "").trim();
     if (staffId) {
       if (!(await salon.staffHandlesMenu(staffId, menu.id))) {
         return NextResponse.json({ error: "このスタッフはそのメニューに対応していません" }, { status: 400 });
       }
-      const check = await isSalonSlotAvailable(link, staffId, startAt, durationMin);
+      if (staffAllow && !staffAllow.has(staffId)) {
+        return NextResponse.json({ error: "このスタッフは現在選べません" }, { status: 400 });
+      }
+      const st = await salon.getStaff(staffId, link.owner_user_id);
+      const check = await isSalonSlotAvailable(link, staffId, startAt, durationMin, {
+        staffDayHours: st?.day_hours ?? null,
+      });
       if (!check.ok) return NextResponse.json({ error: check.reason }, { status: 409 });
     } else {
-      // おまかせ: 対応スタッフから空いている人を選ぶ
-      const staffList = await salon.listStaffForMenu(link.owner_user_id, menu.id);
+      // おまかせ: 対応スタッフ（リンク許可内）から空いている人を選ぶ
+      const staffList = await staffForLinkMenu(link, menu.id);
       let picked = "";
       for (const s of staffList) {
-        const check = await isSalonSlotAvailable(link, s.id, startAt, durationMin);
+        const check = await isSalonSlotAvailable(link, s.id, startAt, durationMin, {
+          staffDayHours: s.day_hours ?? null,
+        });
         if (check.ok) {
           picked = s.id;
           break;
@@ -425,4 +502,114 @@ export function createSalonReserveHandler() {
       cancel_url: cancelUrl,
     });
   };
+}
+
+// ---- 代理予約（管理者が電話・来店客の分を登録）----
+// 受付時間・リード・締切の制限を外し、重複だけ確認して登録する。
+// 呼び出し側（アプリのサーバーアクション）で「link が本人所有か」を必ず確認すること。
+export async function createSalonAdminReservation(
+  link: BookingLinkRow,
+  input: {
+    staffId: string;
+    menuId: string;
+    optionIds?: string[];
+    startAt: string;
+    name: string;
+    phone?: string;
+    email?: string;
+    note?: string;
+  },
+): Promise<
+  | { ok: true; start_at: string; end_at: string; staff_id: string }
+  | { ok: false; error: string }
+> {
+  const supabase = anonClient();
+  if (link.link_type !== "salon") return { ok: false, error: "サロン型リンクではありません" };
+  const name = (input.name ?? "").trim();
+  if (!name) return { ok: false, error: "お名前を入力してください" };
+  const menu = await salon.getMenu(input.menuId, link.owner_user_id);
+  if (!menu) return { ok: false, error: "メニューが不正です" };
+  const staffId = (input.staffId ?? "").trim();
+  if (!staffId) return { ok: false, error: "担当スタッフを選んでください" };
+  if (!(await salon.staffHandlesMenu(staffId, menu.id))) {
+    return { ok: false, error: "このスタッフはそのメニューに対応していません" };
+  }
+  const optionIdsCsv = Array.isArray(input.optionIds) ? input.optionIds.join(",") : null;
+  const { durationMin, price: totalPrice, options } = await resolveTotals(
+    link.owner_user_id,
+    menu,
+    optionIdsCsv,
+  );
+  const startMs = Date.parse(input.startAt);
+  if (Number.isNaN(startMs)) return { ok: false, error: "日時が不正です" };
+  const startIso = new Date(startMs).toISOString();
+  const endIso = new Date(startMs + durationMin * 60 * 1000).toISOString();
+
+  const st = await salon.getStaff(staffId, link.owner_user_id);
+  const check = await isSalonSlotAvailable(link, staffId, startIso, durationMin, {
+    admin: true,
+    staffDayHours: st?.day_hours ?? null,
+  });
+  if (!check.ok) return { ok: false, error: check.reason ?? "その枠は予約できません" };
+
+  const cancelToken = generateCancelToken();
+  const { data: reservation, error: insErr } = await supabase
+    .from("booking_reservations")
+    .insert({
+      link_id: link.id,
+      start_at: startIso,
+      end_at: endIso,
+      slot_seq: 0,
+      staff_id: staffId,
+      menu_id: menu.id,
+      guest_name: name,
+      guest_email: (input.email ?? "").trim() || null,
+      guest_phone: (input.phone ?? "").trim() || null,
+      guest_note: (input.note ?? "").trim() || null,
+      custom_answers: {},
+      option_ids: options.map((o) => o.id),
+      total_price: totalPrice,
+      status: "confirmed",
+      cancel_token: cancelToken,
+    })
+    .select()
+    .single();
+  if (insErr || !reservation) {
+    if (insErr?.code === "23505") {
+      return { ok: false, error: "その枠は既に予約が入っています" };
+    }
+    return { ok: false, error: `予約の登録に失敗しました: ${insErr?.message ?? ""}` };
+  }
+
+  // スタッフの Google カレンダーへ（連携時のみ・任意）
+  try {
+    const gcal = await getOwnerCalendar(staffId);
+    if (gcal) {
+      const res = await gcal.events.insert({
+        calendarId: "primary",
+        requestBody: {
+          summary: `${menu.name}（${name}様）※代理`,
+          description: [
+            `メニュー: ${menu.name}`,
+            `お名前: ${name}`,
+            input.phone ? `電話: ${input.phone}` : null,
+            input.note ? `備考: ${input.note}` : null,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          location: link.location ?? undefined,
+          start: { dateTime: startIso, timeZone: "Asia/Tokyo" },
+          end: { dateTime: endIso, timeZone: "Asia/Tokyo" },
+        },
+      });
+      await supabase
+        .from("booking_reservations")
+        .update({ google_event_id: res.data.id ?? null })
+        .eq("id", reservation.id);
+    }
+  } catch (e) {
+    console.error("admin salon google sync failed:", (e as Error).message);
+  }
+
+  return { ok: true, start_at: startIso, end_at: endIso, staff_id: staffId };
 }

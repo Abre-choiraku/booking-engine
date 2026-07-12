@@ -64,7 +64,13 @@ export async function createStaff(input: {
 export async function updateStaff(
   id: string,
   ownerId: string,
-  patch: { name?: string; active?: boolean; display_order?: number; image_url?: string | null },
+  patch: {
+    name?: string;
+    active?: boolean;
+    display_order?: number;
+    image_url?: string | null;
+    day_hours?: import("../types").DayHours | null;
+  },
 ): Promise<void> {
   const supabase = anonClient();
   const { error } = await supabase
@@ -237,6 +243,25 @@ export async function createOption(input: {
     price: input.price ?? null,
     duration_min: input.durationMin ?? 0,
   });
+  if (error) throw error;
+}
+
+export async function updateOption(
+  id: string,
+  ownerId: string,
+  patch: {
+    name?: string;
+    price?: number | null;
+    duration_min?: number;
+    display_order?: number;
+  },
+): Promise<void> {
+  const supabase = anonClient();
+  const { error } = await supabase
+    .from("menu_options")
+    .update(patch)
+    .eq("id", id)
+    .eq("owner_user_id", ownerId);
   if (error) throw error;
 }
 

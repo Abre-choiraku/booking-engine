@@ -71,6 +71,9 @@ export type BookingLink = {
   capacity_per_slot: number;
   // 2本柱化（カレンダー予約 / イベント予約）
   link_type: "calendar" | "event" | "salon";
+  // サロン型: このリンクで見せるメニュー/スタッフを限定（null/空=全部）
+  salon_menu_ids?: string[] | null;
+  salon_staff_ids?: string[] | null;
   period_start: string | null; // YYYY-MM-DD（イベント型の期間指定）
   period_end: string | null;
   sync_google_busy: boolean | null; // null = 旧挙動（1対1のみ連動）
@@ -184,6 +187,8 @@ export type Staff = {
   image_url: string | null;
   display_order: number;
   active: boolean;
+  // スタッフ別の営業時間（null = 店共通 = リンクの day_hours を使用）
+  day_hours?: DayHours | null;
   created_at?: string;
 };
 

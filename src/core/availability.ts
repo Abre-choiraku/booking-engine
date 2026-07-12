@@ -703,9 +703,18 @@ export async function fetchConfirmedGuests(
 // 全予約 + 手動ロック から、メニュー所要(durationMin)で空き枠を出す。
 export async function computeSalonAvailability(
   link: BookingLinkRow,
-  opts: { staffId: string; durationMin: number },
+  opts: {
+    staffId: string;
+    durationMin: number;
+    // スタッフ別営業時間（あればリンクの day_hours より優先）
+    staffDayHours?: import("../types").DayHours | null;
+  },
 ): Promise<DaySlots[]> {
   const { staffId, durationMin } = opts;
+  // 営業時間はスタッフ個別（あれば）を優先。他の設定はリンク共通。
+  const hoursLink = opts.staffDayHours
+    ? ({ ...link, day_hours: opts.staffDayHours } as BookingLinkRow)
+    : link;
   const now = Date.now();
   if (link.deadline_at && now > Date.parse(link.deadline_at)) return [];
   const noticeLimit = now + link.min_notice_hours * 60 * 60 * 1000;
@@ -722,7 +731,7 @@ export async function computeSalonAvailability(
 
   const busy = await collectBusy(link, fromIso, toIso, { staffId });
   const locks = await fetchLocks(link.id);
-  const isHoliday = needsHolidayCheck(link) ? await makeHolidayChecker() : () => false;
+  const isHoliday = needsHolidayCheck(hoursLink) ? await makeHolidayChecker() : () => false;
   const isLocked = (s: number, e: number) =>
     locks.some((lk) =>
       overlaps(s, e, { start: Date.parse(lk.start_at), end: Date.parse(lk.end_at) }),
@@ -730,7 +739,7 @@ export async function computeSalonAvailability(
 
   const byDay = new Map<string, Slot[]>();
   for (const dateStr of hoursDates(link, now)) {
-    for (const { start: ds, end: de } of dateOpenRanges(link, dateStr, isHoliday(dateStr))) {
+    for (const { start: ds, end: de } of dateOpenRanges(hoursLink, dateStr, isHoliday(dateStr))) {
       if (Number.isNaN(ds) || Number.isNaN(de)) continue;
       for (let t = ds; t + durMs <= de; t += step) {
         if (t < noticeLimit || t > windowEnd) continue;
@@ -760,15 +769,24 @@ export async function isSalonSlotAvailable(
   staffId: string,
   startAtIso: string,
   durationMin: number,
+  opts?: {
+    staffDayHours?: import("../types").DayHours | null;
+    // 管理者の代理予約: 最短予約リード/締切/受付時間の制限を外し、重複だけ確認
+    admin?: boolean;
+  },
 ): Promise<{ ok: boolean; reason?: string }> {
+  const hoursLink = opts?.staffDayHours
+    ? ({ ...link, day_hours: opts.staffDayHours } as BookingLinkRow)
+    : link;
+  const admin = opts?.admin ?? false;
   const startMs = Date.parse(startAtIso);
   if (Number.isNaN(startMs)) return { ok: false, reason: "日時が不正です" };
   const endMs = startMs + durationMin * 60 * 1000;
   const now = Date.now();
-  if (link.deadline_at && now > Date.parse(link.deadline_at)) {
+  if (!admin && link.deadline_at && now > Date.parse(link.deadline_at)) {
     return { ok: false, reason: "予約の受付を締め切りました" };
   }
-  if (startMs < now + link.min_notice_hours * 60 * 60 * 1000) {
+  if (!admin && startMs < now + link.min_notice_hours * 60 * 60 * 1000) {
     return { ok: false, reason: "直前の予約はできません。別の枠をお選びください" };
   }
   const step =
@@ -777,23 +795,26 @@ export async function isSalonSlotAvailable(
       : durationMin) *
     60 *
     1000;
-  const dateStr = jstDateStr(new Date(startMs));
-  const withinHorizon = startMs <= bookingHorizon(link, now);
-  const withinPeriod =
-    !link.period_start ||
-    !link.period_end ||
-    (dateStr >= link.period_start && dateStr <= link.period_end);
-  const isHoliday = needsHolidayCheck(link) ? await makeHolidayChecker() : () => false;
-  let onGrid = false;
-  if (withinHorizon && withinPeriod) {
-    for (const { start: ds, end: de } of dateOpenRanges(link, dateStr, isHoliday(dateStr))) {
-      if (startMs >= ds && endMs <= de && (startMs - ds) % step === 0) {
-        onGrid = true;
-        break;
+  // 代理予約(admin)は受付時間・期間・グリッドの制約を外し、重複のみ確認する
+  if (!admin) {
+    const dateStr = jstDateStr(new Date(startMs));
+    const withinHorizon = startMs <= bookingHorizon(link, now);
+    const withinPeriod =
+      !link.period_start ||
+      !link.period_end ||
+      (dateStr >= link.period_start && dateStr <= link.period_end);
+    const isHoliday = needsHolidayCheck(hoursLink) ? await makeHolidayChecker() : () => false;
+    let onGrid = false;
+    if (withinHorizon && withinPeriod) {
+      for (const { start: ds, end: de } of dateOpenRanges(hoursLink, dateStr, isHoliday(dateStr))) {
+        if (startMs >= ds && endMs <= de && (startMs - ds) % step === 0) {
+          onGrid = true;
+          break;
+        }
       }
     }
+    if (!onGrid) return { ok: false, reason: "受付時間外です" };
   }
-  if (!onGrid) return { ok: false, reason: "受付時間外です" };
 
   const locks = await fetchLocks(link.id);
   if (
