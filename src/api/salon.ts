@@ -333,78 +333,85 @@ export function createSalonReserveHandler() {
     const startIso = new Date(startMs).toISOString();
     const endIso = new Date(startMs + durationMin * 60 * 1000).toISOString();
 
-    // 担当スタッフの決定（指定 or おまかせ）
+    // 担当スタッフの候補を決定（指定=1名 / おまかせ=空いている対応スタッフ全員）
     const staffAllow = allowedStaffIdSet(link);
-    let staffId = (body.staffId ?? "").trim();
-    if (staffId) {
-      if (!(await salon.staffHandlesMenu(staffId, menu.id))) {
+    const requestedStaff = (body.staffId ?? "").trim();
+    let candidates: string[] = [];
+    if (requestedStaff) {
+      if (!(await salon.staffHandlesMenu(requestedStaff, menu.id))) {
         return NextResponse.json({ error: "このスタッフはそのメニューに対応していません" }, { status: 400 });
       }
-      if (staffAllow && !staffAllow.has(staffId)) {
+      if (staffAllow && !staffAllow.has(requestedStaff)) {
         return NextResponse.json({ error: "このスタッフは現在選べません" }, { status: 400 });
       }
-      const st = await salon.getStaff(staffId, link.owner_user_id);
-      const check = await isSalonSlotAvailable(link, staffId, startAt, durationMin, {
+      const st = await salon.getStaff(requestedStaff, link.owner_user_id);
+      const check = await isSalonSlotAvailable(link, requestedStaff, startAt, durationMin, {
         staffDayHours: st?.day_hours ?? null,
       });
       if (!check.ok) return NextResponse.json({ error: check.reason }, { status: 409 });
+      candidates = [requestedStaff];
     } else {
-      // おまかせ: 対応スタッフ（リンク許可内）から空いている人を選ぶ
+      // おまかせ: 対応スタッフ（リンク許可内）で空いている人を順に候補化
       const staffList = await staffForLinkMenu(link, menu.id);
-      let picked = "";
       for (const s of staffList) {
         const check = await isSalonSlotAvailable(link, s.id, startAt, durationMin, {
           staffDayHours: s.day_hours ?? null,
         });
-        if (check.ok) {
-          picked = s.id;
-          break;
-        }
+        if (check.ok) candidates.push(s.id);
       }
-      if (!picked) {
+      if (candidates.length === 0) {
         return NextResponse.json(
           { error: "その時間に対応できるスタッフがいません。別の枠をお選びください" },
           { status: 409 },
         );
       }
-      staffId = picked;
     }
 
     const cancelToken = generateCancelToken();
-    // 予約を INSERT（uq_booking_salon: link_id×staff_id×start_at で排他）
-    const { data: reservation, error: insErr } = await supabase
-      .from("booking_reservations")
-      .insert({
-        link_id: link.id,
-        start_at: startIso,
-        end_at: endIso,
-        slot_seq: 0,
-        staff_id: staffId,
-        menu_id: menu.id,
-        guest_name: guest.name,
-        guest_email: guest.email || null,
-        guest_phone: guest.phone || null,
-        guest_note: guest.note || null,
-        custom_answers: body.custom_answers ?? {},
-        option_ids: options.map((o) => o.id),
-        total_price: totalPrice,
-        status: "confirmed",
-        cancel_token: cancelToken,
-      })
-      .select()
-      .single();
-    if (insErr || !reservation) {
-      // 一意制約違反 = ちょうど埋まった
-      if (insErr?.code === "23505") {
+    // 予約を INSERT（uq_booking_salon: link_id×staff_id×start_at で排他）。
+    // おまかせは、あるスタッフが直前に埋まっても（23505）次の候補で再試行する。
+    let reservation: { id: string } | null = null;
+    let staffId = "";
+    let lastErrCode: string | undefined;
+    for (const cand of candidates) {
+      const { data, error } = await supabase
+        .from("booking_reservations")
+        .insert({
+          link_id: link.id,
+          start_at: startIso,
+          end_at: endIso,
+          slot_seq: 0,
+          staff_id: cand,
+          menu_id: menu.id,
+          guest_name: guest.name,
+          guest_email: guest.email || null,
+          guest_phone: guest.phone || null,
+          guest_note: guest.note || null,
+          custom_answers: body.custom_answers ?? {},
+          option_ids: options.map((o) => o.id),
+          total_price: totalPrice,
+          status: "confirmed",
+          cancel_token: cancelToken,
+        })
+        .select()
+        .single();
+      if (!error && data) {
+        reservation = data as { id: string };
+        staffId = cand;
+        break;
+      }
+      lastErrCode = error?.code;
+      if (error?.code === "23505") continue; // この候補は直前に埋まった → 次へ
+      break; // その他のエラーは中断
+    }
+    if (!reservation) {
+      if (lastErrCode === "23505") {
         return NextResponse.json(
           { error: "その枠は直前に埋まりました。別の枠をお選びください" },
           { status: 409 },
         );
       }
-      return NextResponse.json(
-        { error: `予約の登録に失敗しました: ${insErr?.message ?? ""}` },
-        { status: 500 },
-      );
+      return NextResponse.json({ error: "予約の登録に失敗しました" }, { status: 500 });
     }
 
     // Web会議（Zoom / Meet）と Google カレンダー（スタッフの暦）
