@@ -177,6 +177,85 @@ export async function getBookingLink(
   return (data as BookingLink) ?? null;
 }
 
+// 予約リンクを更新（作成と同じ項目を上書き。token/owner_user_id/project_id は変更しない）。
+// ownerId を渡すと所有者一致のときのみ更新（他テナントは触れない）。
+export async function updateBookingLink(
+  id: string,
+  input: {
+    title: string;
+    description?: string | null;
+    location?: string | null;
+    duration_min: number;
+    slot_interval_min?: number | null;
+    window_days: number;
+    day_start: string;
+    day_end: string;
+    exclude_weekends: boolean;
+    weekdays?: number[] | null;
+    exclude_holidays?: boolean;
+    time_ranges?: { start: string; end: string }[] | null;
+    day_hours?: import("../types").DayHours | null;
+    min_notice_hours: number;
+    slot_mode: "hours" | "ranges" | "both" | "anytime";
+    deadline_at?: string | null;
+    meeting_type: "none" | "meet" | "zoom";
+    cancel_deadline_hours: number;
+    capacity_per_slot: number;
+    link_type: "calendar" | "event" | "salon";
+    period_start?: string | null;
+    period_end?: string | null;
+    sync_google_busy: boolean;
+    show_guest_names: boolean;
+    email_mode: FieldMode;
+    phone_mode: FieldMode;
+    custom_fields: CustomField[];
+    default_view: "day" | "week" | "month";
+  },
+  ownerId?: string,
+): Promise<BookingLink> {
+  const supabase = anonClient();
+  let query = supabase
+    .from("booking_links")
+    .update({
+      title: input.title,
+      description: input.description ?? null,
+      location: input.location ?? null,
+      duration_min: input.duration_min,
+      slot_interval_min: input.slot_interval_min ?? null,
+      window_days: input.window_days,
+      day_start: input.day_start,
+      day_end: input.day_end,
+      exclude_weekends: input.exclude_weekends,
+      weekdays: input.weekdays ?? null,
+      exclude_holidays: input.exclude_holidays ?? false,
+      time_ranges: input.time_ranges ?? null,
+      day_hours: input.day_hours ?? null,
+      min_notice_hours: input.min_notice_hours,
+      slot_mode: input.slot_mode,
+      deadline_at: input.deadline_at ?? null,
+      meeting_type: input.meeting_type,
+      cancel_deadline_hours: input.cancel_deadline_hours,
+      // mode は定員から導出（作成と同じ規則）
+      mode: input.capacity_per_slot > 1 ? "one_to_many" : "one_to_one",
+      capacity_per_slot: Math.max(1, input.capacity_per_slot),
+      link_type: input.link_type,
+      period_start: input.period_start ?? null,
+      period_end: input.period_end ?? null,
+      sync_google_busy: input.sync_google_busy,
+      show_guest_names: input.show_guest_names,
+      email_mode: input.email_mode,
+      phone_mode: input.phone_mode,
+      custom_fields: input.custom_fields,
+      default_view: input.default_view,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+  if (ownerId) query = query.eq("owner_user_id", ownerId);
+  const { data, error } = await query.select().single();
+  if (error) throw error;
+  return data as BookingLink;
+}
+
 export async function setBookingLinkStatus(
   id: string,
   status: "active" | "paused",
