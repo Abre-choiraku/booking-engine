@@ -35,3 +35,13 @@ export async function notifyReservationCancelled(payload: NotifyPayload): Promis
     console.error("notifyReservationCancelled failed:", (e as Error).message);
   }
 }
+
+export async function notifyReservationReminder(payload: NotifyPayload): Promise<void> {
+  const adapter = resolveNotify();
+  if (!adapter?.reservationReminder) return;
+  try {
+    await adapter.reservationReminder(payload);
+  } catch (e) {
+    console.error("notifyReservationReminder failed:", (e as Error).message);
+  }
+}

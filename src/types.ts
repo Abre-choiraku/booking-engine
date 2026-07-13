@@ -83,6 +83,8 @@ export type BookingLink = {
   phone_mode: FieldMode;
   custom_fields: CustomField[];
   default_view: "day" | "week" | "month";
+  // リマインドメール: 予約の何時間前に送るか。null/0=送らない
+  reminder_hours?: number | null;
   created_at?: string;
 };
 
@@ -148,6 +150,7 @@ export type BookingReservation = {
   event_id: string | null;
   created_at: string;
   cancelled_at: string | null;
+  reminder_sent_at?: string | null;
 };
 
 // ============================================================

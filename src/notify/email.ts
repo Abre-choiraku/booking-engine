@@ -187,5 +187,31 @@ export function createEmailNotifyAdapter(opts: EmailNotifyOptions = {}): NotifyA
         );
       }
     },
+
+    async reservationReminder(input: NotifyPayload) {
+      if (!input.guestEmail) return; // メール未登録者にはリマインドできない
+      const when = jstRange(input.startIso, input.endIso);
+      const from = await resolveFrom(input.link.owner_user_id, opts.from);
+      const lines: string[] = [];
+      lines.push(`${input.guestName} 様`);
+      lines.push("");
+      lines.push(`ご予約の日時が近づきましたのでお知らせします。`);
+      lines.push("");
+      lines.push(`■ ${input.link.title}`);
+      lines.push(`■ 日時: ${when}`);
+      if (input.link.location) lines.push(`■ 場所: ${input.link.location}`);
+      if (input.meetUrl) lines.push(`■ Web会議: ${input.meetUrl}`);
+      if (input.cancelUrl) {
+        lines.push("");
+        lines.push(`ご都合が悪くなった場合のキャンセルはこちら（${input.link.cancel_deadline_hours}時間前まで）:`);
+        lines.push(input.cancelUrl);
+      }
+      await resendSend(
+        input.guestEmail,
+        `【ご予約リマインド】${input.link.title} - ${when}`,
+        lines.join("\n"),
+        from,
+      );
+    },
   };
 }

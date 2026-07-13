@@ -100,6 +100,7 @@ export async function createBookingLink(input: {
   phone_mode: FieldMode;
   custom_fields: CustomField[];
   default_view: "day" | "week" | "month";
+  reminder_hours?: number | null;
   // slot_mode = ranges / both のときの手動日時範囲
   windows?: { start_at: string; end_at: string }[];
 }): Promise<BookingLink> {
@@ -145,6 +146,7 @@ export async function createBookingLink(input: {
       phone_mode: input.phone_mode,
       custom_fields: input.custom_fields,
       default_view: input.default_view,
+      reminder_hours: input.reminder_hours ?? null,
     })
     .select()
     .single();
@@ -216,6 +218,7 @@ export async function updateBookingLink(
     phone_mode: FieldMode;
     custom_fields: CustomField[];
     default_view: "day" | "week" | "month";
+    reminder_hours?: number | null;
   },
   ownerId?: string,
 ): Promise<BookingLink> {
@@ -255,6 +258,7 @@ export async function updateBookingLink(
       phone_mode: input.phone_mode,
       custom_fields: input.custom_fields,
       default_view: input.default_view,
+      reminder_hours: input.reminder_hours ?? null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", id);

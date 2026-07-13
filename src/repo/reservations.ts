@@ -1,7 +1,7 @@
-import { anonClient } from "../config";
+import { anonClient, getEngineConfig } from "../config";
 import { getOwnerCalendar } from "../google/calendar";
 import { deleteZoomMeeting } from "../zoom";
-import { notifyReservationCancelled } from "../notify";
+import { notifyReservationCancelled, notifyReservationReminder } from "../notify";
 import type { BookingLinkRow } from "../types";
 
 // ============================================================
@@ -169,4 +169,68 @@ export async function cancelReservationByOwner(
   }
 
   return { ok: true };
+}
+
+// リマインド送信対象（リンクに reminder_hours 設定・未送信・その時間前に達した確定予約）を
+// 探してメール送信し、reminder_sent_at を立てる（二重送信防止）。Cron から定期実行。
+export async function sendDueReminders(): Promise<{ sent: number; checked: number }> {
+  const supabase = anonClient();
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const horizonIso = new Date(nowMs + 8 * 24 * 60 * 60 * 1000).toISOString(); // 最長8日先まで見る
+  const { data } = await supabase
+    .from("booking_reservations")
+    .select(
+      "id, start_at, end_at, guest_name, guest_email, meet_url, cancel_token, reminder_sent_at, status, link:booking_links!inner(title, location, description, cancel_deadline_hours, owner_user_id, reminder_hours)",
+    )
+    .eq("status", "confirmed")
+    .is("reminder_sent_at", null)
+    .gt("start_at", nowIso)
+    .lt("start_at", horizonIso)
+    .limit(500);
+  const rows = (data ?? []) as unknown as {
+    id: string;
+    start_at: string;
+    end_at: string;
+    guest_name: string;
+    guest_email: string | null;
+    meet_url: string | null;
+    cancel_token: string | null;
+    link: BookingLinkRow & { reminder_hours: number | null };
+  }[];
+
+  const baseUrl = getEngineConfig().publicBaseUrl ?? "";
+  let sent = 0;
+  for (const r of rows) {
+    const rh = r.link?.reminder_hours;
+    if (!rh || rh <= 0) continue;
+    const startMs = Date.parse(r.start_at);
+    if (nowMs < startMs - rh * 60 * 60 * 1000) continue; // まだ「◯時間前」に達していない
+
+    // 二重送信防止: 先に reminder_sent_at を立てる（条件付き）。取れなければ他が処理済み。
+    const { data: claimed } = await supabase
+      .from("booking_reservations")
+      .update({ reminder_sent_at: new Date().toISOString() })
+      .eq("id", r.id)
+      .is("reminder_sent_at", null)
+      .select("id");
+    if (!claimed || claimed.length === 0) continue;
+
+    if (!r.guest_email) continue; // メール未登録は送れない（送信済み扱いで再チェックを避ける）
+    try {
+      await notifyReservationReminder({
+        link: r.link,
+        guestName: r.guest_name,
+        guestEmail: r.guest_email,
+        startIso: r.start_at,
+        endIso: r.end_at,
+        meetUrl: r.meet_url,
+        cancelUrl: r.cancel_token ? `${baseUrl}/cancel/${r.cancel_token}` : null,
+      });
+      sent++;
+    } catch (e) {
+      console.error("reminder send failed:", (e as Error).message);
+    }
+  }
+  return { sent, checked: rows.length };
 }

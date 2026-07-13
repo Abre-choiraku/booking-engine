@@ -39,6 +39,8 @@ export interface NotifyPayload {
 export interface NotifyAdapter {
   reservationConfirmed(payload: NotifyPayload): Promise<void>;
   reservationCancelled(payload: NotifyPayload): Promise<void>;
+  // リマインド（予約日時が近づいたとき）。実装は任意（未実装アダプタは送らない）。
+  reservationReminder?(payload: NotifyPayload): Promise<void>;
 }
 
 // ---- カレンダーアダプタ: アプリ内カレンダーへの busy 反映・予定ミラー ----

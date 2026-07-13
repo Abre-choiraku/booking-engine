@@ -54,6 +54,7 @@ export {
 export {
   notifyReservationConfirmed,
   notifyReservationCancelled,
+  notifyReservationReminder,
   createEmailNotifyAdapter,
 } from "./notify";
 export type { EmailNotifyOptions } from "./notify";
