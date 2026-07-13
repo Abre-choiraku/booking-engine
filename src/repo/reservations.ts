@@ -177,7 +177,8 @@ export async function sendDueReminders(): Promise<{ sent: number; checked: numbe
   const supabase = anonClient();
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
-  const horizonIso = new Date(nowMs + 8 * 24 * 60 * 60 * 1000).toISOString(); // 最長8日先まで見る
+  // reminder_hours が大きめでも拾えるよう、先読み範囲は 60 日先まで（現実的な値を十分カバー）
+  const horizonIso = new Date(nowMs + 60 * 24 * 60 * 60 * 1000).toISOString();
   const { data } = await supabase
     .from("booking_reservations")
     .select(
