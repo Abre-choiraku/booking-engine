@@ -97,8 +97,8 @@ export type BookingLink = {
 //   before … 予約開始の hours 時間前に送る
 //   at     … 予約日の days_before 日前、その日の time(HH:MM, JST) に送る
 export type ReminderConfig =
-  | { kind: "before"; hours: number }
-  | { kind: "at"; days_before: number; time: string };
+  | { kind: "before"; hours: number; message?: string | null }
+  | { kind: "at"; days_before: number; time: string; message?: string | null };
 
 // 空き計算エンジンが受け取る形（BookingLink の必須サブセット）。
 // 後方互換のため email_mode / phone_mode / custom_fields は optional。

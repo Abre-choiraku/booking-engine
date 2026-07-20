@@ -33,6 +33,8 @@ export interface NotifyPayload {
   endIso: string;
   meetUrl: string | null;
   cancelUrl: string | null;
+  // リマインド送信時の案内文（リマインド固有→無ければリンク共通の解決済み値）
+  reminderMessage?: string | null;
   // line モード用（Phase 3）: 予約者の LINE friend_id
   lineFriendId?: string | null;
 }

@@ -267,6 +267,9 @@ export async function sendDueReminders(): Promise<{ sent: number; checked: numbe
       if (!claimed || claimed.length === 0) continue; // 既に送信済み
 
       if (!r.guest_email) continue; // メール未登録は送れない
+      // このリマインド固有の案内文→無ければリンク共通の案内文
+      const resolvedMsg =
+        c.message?.trim() || r.link?.reminder_message?.trim() || null;
       try {
         await notifyReservationReminder({
           link: r.link,
@@ -276,6 +279,7 @@ export async function sendDueReminders(): Promise<{ sent: number; checked: numbe
           endIso: r.end_at,
           meetUrl: r.meet_url,
           cancelUrl: r.cancel_token ? `${baseUrl}/cancel/${r.cancel_token}` : null,
+          reminderMessage: resolvedMsg,
         });
         sent++;
       } catch (e) {
