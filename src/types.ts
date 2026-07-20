@@ -88,6 +88,8 @@ export type BookingLink = {
   reminder_hours?: number | null;
   // リマインドメール（新・複数）: 各設定でメールを送る。空配列=送らない
   reminders?: ReminderConfig[] | null;
+  // リマインドメールに差し込む任意の案内文（空=自動テンプレのみ）
+  reminder_message?: string | null;
   created_at?: string;
 };
 

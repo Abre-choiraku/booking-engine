@@ -197,6 +197,12 @@ export function createEmailNotifyAdapter(opts: EmailNotifyOptions = {}): NotifyA
       lines.push("");
       lines.push(`ご予約の日時が近づきましたのでお知らせします。`);
       lines.push("");
+      // 事業者が設定した任意の案内文（あれば差し込む）
+      const rmsg = input.link.reminder_message?.trim();
+      if (rmsg) {
+        lines.push(rmsg);
+        lines.push("");
+      }
       lines.push(`■ ${input.link.title}`);
       lines.push(`■ 日時: ${when}`);
       if (input.link.location) lines.push(`■ 場所: ${input.link.location}`);

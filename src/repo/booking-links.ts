@@ -103,6 +103,7 @@ export async function createBookingLink(input: {
   default_view: "day" | "week" | "month";
   reminder_hours?: number | null;
   reminders?: ReminderConfig[] | null;
+  reminder_message?: string | null;
   // slot_mode = ranges / both のときの手動日時範囲
   windows?: { start_at: string; end_at: string }[];
 }): Promise<BookingLink> {
@@ -150,6 +151,7 @@ export async function createBookingLink(input: {
       default_view: input.default_view,
       reminder_hours: input.reminder_hours ?? null,
       reminders: input.reminders ?? [],
+      reminder_message: input.reminder_message ?? null,
     })
     .select()
     .single();
@@ -223,6 +225,7 @@ export async function updateBookingLink(
     default_view: "day" | "week" | "month";
     reminder_hours?: number | null;
     reminders?: ReminderConfig[] | null;
+    reminder_message?: string | null;
   },
   ownerId?: string,
 ): Promise<BookingLink> {
@@ -264,6 +267,7 @@ export async function updateBookingLink(
       default_view: input.default_view,
       reminder_hours: input.reminder_hours ?? null,
       reminders: input.reminders ?? [],
+      reminder_message: input.reminder_message ?? null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", id);

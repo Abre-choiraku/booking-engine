@@ -211,7 +211,7 @@ export async function sendDueReminders(): Promise<{ sent: number; checked: numbe
   const { data } = await supabase
     .from("booking_reservations")
     .select(
-      "id, start_at, end_at, guest_name, guest_email, meet_url, cancel_token, created_at, status, link:booking_links!inner(title, location, description, cancel_deadline_hours, owner_user_id, reminder_hours, reminders)",
+      "id, start_at, end_at, guest_name, guest_email, meet_url, cancel_token, created_at, status, link:booking_links!inner(title, location, description, cancel_deadline_hours, owner_user_id, reminder_hours, reminders, reminder_message)",
     )
     .eq("status", "confirmed")
     .gt("start_at", nowIso)
