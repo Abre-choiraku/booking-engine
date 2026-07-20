@@ -83,10 +83,20 @@ export type BookingLink = {
   phone_mode: FieldMode;
   custom_fields: CustomField[];
   default_view: "day" | "week" | "month";
-  // リマインドメール: 予約の何時間前に送るか。null/0=送らない
+  // リマインドメール（旧・単発）: 予約の何時間前に送るか。null/0=送らない
+  // 後方互換のため残す。新規は reminders を使う。
   reminder_hours?: number | null;
+  // リマインドメール（新・複数）: 各設定でメールを送る。空配列=送らない
+  reminders?: ReminderConfig[] | null;
   created_at?: string;
 };
+
+// リマインド1件の設定
+//   before … 予約開始の hours 時間前に送る
+//   at     … 予約日の days_before 日前、その日の time(HH:MM, JST) に送る
+export type ReminderConfig =
+  | { kind: "before"; hours: number }
+  | { kind: "at"; days_before: number; time: string };
 
 // 空き計算エンジンが受け取る形（BookingLink の必須サブセット）。
 // 後方互換のため email_mode / phone_mode / custom_fields は optional。

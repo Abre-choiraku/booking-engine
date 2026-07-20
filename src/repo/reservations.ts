@@ -2,7 +2,7 @@ import { anonClient, getEngineConfig } from "../config";
 import { getOwnerCalendar } from "../google/calendar";
 import { deleteZoomMeetingForUser } from "../zoom";
 import { notifyReservationCancelled, notifyReservationReminder } from "../notify";
-import type { BookingLinkRow } from "../types";
+import type { BookingLinkRow, ReminderConfig } from "../types";
 
 // ============================================================
 // 予約一覧・管理者キャンセル（主催者ダッシュボード用）
@@ -171,24 +171,52 @@ export async function cancelReservationByOwner(
   return { ok: true };
 }
 
-// リマインド送信対象（リンクに reminder_hours 設定・未送信・その時間前に達した確定予約）を
-// 探してメール送信し、reminder_sent_at を立てる（二重送信防止）。Cron から定期実行。
+// リマインド1件の送信時刻(UTC ms)を計算。JST基準。無効なら null。
+function reminderFireTime(c: ReminderConfig, startMs: number): number | null {
+  if (c.kind === "before") {
+    if (!c.hours || c.hours <= 0) return null;
+    return startMs - c.hours * 60 * 60 * 1000;
+  }
+  // kind === "at": 予約日(JST)の days_before 日前、その日の time(HH:MM, JST) に送る
+  const JST = 9 * 60 * 60 * 1000;
+  const jst = new Date(startMs + JST); // UTCゲッターでJSTの年月日が読める
+  const y = jst.getUTCFullYear();
+  const mo = jst.getUTCMonth();
+  const d = jst.getUTCDate();
+  const parts = (c.time || "09:00").split(":");
+  let hh = parseInt(parts[0], 10);
+  let mm = parseInt(parts[1], 10);
+  if (!Number.isFinite(hh)) hh = 9;
+  if (!Number.isFinite(mm)) mm = 0;
+  const days = Number.isFinite(c.days_before) ? c.days_before : 0;
+  // 予約日の 00:00 JST を UTC ms で表す（= Date.UTC(...) - 9h）
+  const dayStartJstUtcMs = Date.UTC(y, mo, d, 0, 0, 0) - JST;
+  return (
+    dayStartJstUtcMs -
+    days * 24 * 60 * 60 * 1000 +
+    (hh * 60 + mm) * 60 * 1000
+  );
+}
+
+// リマインド送信対象を探してメール送信する。Cron から定期実行。
+// リンクの reminders（複数・「◯時間前」/「◯日前のHH:MM」）に対応。
+// 旧 reminder_hours（単発）は後方互換で1件の「◯時間前」として扱う。
+// 二重送信防止は booking_reminder_sends（reservation_id, reminder_key）で原子的に claim。
 export async function sendDueReminders(): Promise<{ sent: number; checked: number }> {
   const supabase = anonClient();
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
-  // reminder_hours が大きめでも拾えるよう、先読み範囲は 60 日先まで（現実的な値を十分カバー）
+  // 先読み範囲は 60 日先まで（現実的な設定を十分カバー）
   const horizonIso = new Date(nowMs + 60 * 24 * 60 * 60 * 1000).toISOString();
   const { data } = await supabase
     .from("booking_reservations")
     .select(
-      "id, start_at, end_at, guest_name, guest_email, meet_url, cancel_token, reminder_sent_at, status, link:booking_links!inner(title, location, description, cancel_deadline_hours, owner_user_id, reminder_hours)",
+      "id, start_at, end_at, guest_name, guest_email, meet_url, cancel_token, created_at, status, link:booking_links!inner(title, location, description, cancel_deadline_hours, owner_user_id, reminder_hours, reminders)",
     )
     .eq("status", "confirmed")
-    .is("reminder_sent_at", null)
     .gt("start_at", nowIso)
     .lt("start_at", horizonIso)
-    .limit(500);
+    .limit(1000);
   const rows = (data ?? []) as unknown as {
     id: string;
     start_at: string;
@@ -197,41 +225,63 @@ export async function sendDueReminders(): Promise<{ sent: number; checked: numbe
     guest_email: string | null;
     meet_url: string | null;
     cancel_token: string | null;
-    link: BookingLinkRow & { reminder_hours: number | null };
+    created_at: string | null;
+    link: BookingLinkRow & {
+      reminder_hours: number | null;
+      reminders: ReminderConfig[] | null;
+    };
   }[];
 
   const baseUrl = getEngineConfig().publicBaseUrl ?? "";
   let sent = 0;
+  let checked = 0;
   for (const r of rows) {
-    const rh = r.link?.reminder_hours;
-    if (!rh || rh <= 0) continue;
+    // 新 reminders 優先。無ければ旧 reminder_hours を1件の「◯時間前」に変換。
+    const configs: ReminderConfig[] =
+      r.link?.reminders && r.link.reminders.length > 0
+        ? r.link.reminders
+        : r.link?.reminder_hours && r.link.reminder_hours > 0
+          ? [{ kind: "before", hours: r.link.reminder_hours }]
+          : [];
+    if (configs.length === 0) continue;
+    checked++;
+
     const startMs = Date.parse(r.start_at);
-    if (nowMs < startMs - rh * 60 * 60 * 1000) continue; // まだ「◯時間前」に達していない
+    const createdMs = r.created_at ? Date.parse(r.created_at) : 0;
 
-    // 二重送信防止: 先に reminder_sent_at を立てる（条件付き）。取れなければ他が処理済み。
-    const { data: claimed } = await supabase
-      .from("booking_reservations")
-      .update({ reminder_sent_at: new Date().toISOString() })
-      .eq("id", r.id)
-      .is("reminder_sent_at", null)
-      .select("id");
-    if (!claimed || claimed.length === 0) continue;
+    for (const c of configs) {
+      const fireMs = reminderFireTime(c, startMs);
+      if (fireMs === null) continue;
+      if (nowMs < fireMs) continue; // まだ送信時刻に達していない
+      if (createdMs && fireMs < createdMs) continue; // 予約時点で既に過ぎていた設定は送らない
 
-    if (!r.guest_email) continue; // メール未登録は送れない（送信済み扱いで再チェックを避ける）
-    try {
-      await notifyReservationReminder({
-        link: r.link,
-        guestName: r.guest_name,
-        guestEmail: r.guest_email,
-        startIso: r.start_at,
-        endIso: r.end_at,
-        meetUrl: r.meet_url,
-        cancelUrl: r.cancel_token ? `${baseUrl}/cancel/${r.cancel_token}` : null,
-      });
-      sent++;
-    } catch (e) {
-      console.error("reminder send failed:", (e as Error).message);
+      // 分単位のキーで原子的に claim（重複送信防止）
+      const key = new Date(fireMs).toISOString().slice(0, 16);
+      const { data: claimed } = await supabase
+        .from("booking_reminder_sends")
+        .upsert([{ reservation_id: r.id, reminder_key: key }], {
+          onConflict: "reservation_id,reminder_key",
+          ignoreDuplicates: true,
+        })
+        .select("reservation_id");
+      if (!claimed || claimed.length === 0) continue; // 既に送信済み
+
+      if (!r.guest_email) continue; // メール未登録は送れない
+      try {
+        await notifyReservationReminder({
+          link: r.link,
+          guestName: r.guest_name,
+          guestEmail: r.guest_email,
+          startIso: r.start_at,
+          endIso: r.end_at,
+          meetUrl: r.meet_url,
+          cancelUrl: r.cancel_token ? `${baseUrl}/cancel/${r.cancel_token}` : null,
+        });
+        sent++;
+      } catch (e) {
+        console.error("reminder send failed:", (e as Error).message);
+      }
     }
   }
-  return { sent, checked: rows.length };
+  return { sent, checked };
 }

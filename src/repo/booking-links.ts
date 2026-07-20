@@ -4,6 +4,7 @@ import type {
   BookingReservation,
   CustomField,
   FieldMode,
+  ReminderConfig,
   SlotLock,
 } from "../types";
 
@@ -101,6 +102,7 @@ export async function createBookingLink(input: {
   custom_fields: CustomField[];
   default_view: "day" | "week" | "month";
   reminder_hours?: number | null;
+  reminders?: ReminderConfig[] | null;
   // slot_mode = ranges / both のときの手動日時範囲
   windows?: { start_at: string; end_at: string }[];
 }): Promise<BookingLink> {
@@ -147,6 +149,7 @@ export async function createBookingLink(input: {
       custom_fields: input.custom_fields,
       default_view: input.default_view,
       reminder_hours: input.reminder_hours ?? null,
+      reminders: input.reminders ?? [],
     })
     .select()
     .single();
@@ -219,6 +222,7 @@ export async function updateBookingLink(
     custom_fields: CustomField[];
     default_view: "day" | "week" | "month";
     reminder_hours?: number | null;
+    reminders?: ReminderConfig[] | null;
   },
   ownerId?: string,
 ): Promise<BookingLink> {
@@ -259,6 +263,7 @@ export async function updateBookingLink(
       custom_fields: input.custom_fields,
       default_view: input.default_view,
       reminder_hours: input.reminder_hours ?? null,
+      reminders: input.reminders ?? [],
       updated_at: new Date().toISOString(),
     })
     .eq("id", id);
