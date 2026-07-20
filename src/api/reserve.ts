@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { anonClient, resolveCalendar, resolveHooks, getEngineConfig } from "../config";
 import { notifyReservationConfirmed } from "../notify";
 import { getOwnerCalendar } from "../google/calendar";
-import { createZoomMeeting } from "../zoom";
+import { createZoomMeetingForUser } from "../zoom";
 import { isSlotAvailable, fetchWindows, slotCapacity } from "../core/availability";
 import type { BookingLinkRow } from "../types";
 
@@ -219,7 +219,7 @@ export function createReserveHandler() {
       // ==== 1対1: 予約ごとにミラー予定 + Web会議（Google Meet / Zoom） ====
       // Zoom を先に発行（Google 連携の有無に依存しない）
       if (wantZoom) {
-        const zm = await createZoomMeeting({
+        const zm = await createZoomMeetingForUser(link.owner_user_id, {
           topic: `${link.title}（${guest.name}様）`,
           startIso,
           durationMin: link.duration_min,
@@ -303,7 +303,7 @@ export function createReserveHandler() {
       if (!seErr && slotEvRow) {
         // --- 自分が最初の予約者: 共有予定 + Web会議（Google Meet / Zoom）を作成 ---
         if (wantZoom) {
-          const zm = await createZoomMeeting({
+          const zm = await createZoomMeetingForUser(link.owner_user_id, {
             topic: `${link.title}（グループ）`,
             startIso,
             durationMin: link.duration_min,

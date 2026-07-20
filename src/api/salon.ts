@@ -7,7 +7,7 @@ import {
   isSalonSlotAvailable,
 } from "../core/availability";
 import { getOwnerCalendar } from "../google/calendar";
-import { createZoomMeeting } from "../zoom";
+import { createZoomMeetingForUser } from "../zoom";
 import { notifyReservationConfirmed } from "../notify";
 import { getEngineConfig } from "../config";
 import type { BookingLinkRow } from "../types";
@@ -423,7 +423,7 @@ export function createSalonReserveHandler() {
     let zoomMeetingId: string | null = null;
 
     if (wantZoom) {
-      const zm = await createZoomMeeting({
+      const zm = await createZoomMeetingForUser(link.owner_user_id, {
         topic: `${menu.name}（${guest.name}様）`,
         startIso,
         durationMin,

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { anonClient, resolveCalendar, resolveHooks } from "../config";
 import { notifyReservationCancelled } from "../notify";
 import { getOwnerCalendar } from "../google/calendar";
-import { deleteZoomMeeting } from "../zoom";
+import { deleteZoomMeetingForUser } from "../zoom";
 import { slotCapacity } from "../core/availability";
 import type { BookingLinkRow } from "../types";
 
@@ -142,7 +142,7 @@ export function createCancelHandler() {
             }
           }
           if (se?.zoom_meeting_id) {
-            await deleteZoomMeeting(se.zoom_meeting_id);
+            await deleteZoomMeetingForUser(r.link.owner_user_id, se.zoom_meeting_id);
           }
           if (se?.event_id) {
             await calendar.deleteMirrorEvent(se.event_id);
@@ -193,7 +193,7 @@ export function createCancelHandler() {
           }
         }
         if (r.zoom_meeting_id) {
-          await deleteZoomMeeting(r.zoom_meeting_id);
+          await deleteZoomMeetingForUser(r.link.owner_user_id, r.zoom_meeting_id);
         }
         if (r.event_id) {
           await calendar.deleteMirrorEvent(r.event_id);

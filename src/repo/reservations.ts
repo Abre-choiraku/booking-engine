@@ -1,6 +1,6 @@
 import { anonClient, getEngineConfig } from "../config";
 import { getOwnerCalendar } from "../google/calendar";
-import { deleteZoomMeeting } from "../zoom";
+import { deleteZoomMeetingForUser } from "../zoom";
 import { notifyReservationCancelled, notifyReservationReminder } from "../notify";
 import type { BookingLinkRow } from "../types";
 
@@ -148,7 +148,7 @@ export async function cancelReservationByOwner(
           .catch(() => {});
       }
     }
-    if (r.zoom_meeting_id) await deleteZoomMeeting(r.zoom_meeting_id);
+    if (r.zoom_meeting_id) await deleteZoomMeetingForUser(ownerId, r.zoom_meeting_id);
   } catch (e) {
     console.error("owner cancel google/zoom failed:", (e as Error).message);
   }

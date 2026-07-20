@@ -70,9 +70,21 @@ export {
 } from "./google/oauth";
 export { encryptToken, decryptToken } from "./google/crypto";
 
-// Zoom 連携（Server-to-Server OAuth）
-export { createZoomMeeting, deleteZoomMeeting } from "./zoom";
+// Zoom 連携（per-owner OAuth ＋ 旧 S2S）
+export {
+  createZoomMeeting,
+  deleteZoomMeeting,
+  createZoomMeetingForUser,
+  deleteZoomMeetingForUser,
+} from "./zoom";
 export type { ZoomMeeting } from "./zoom";
+export {
+  buildZoomAuthUrl,
+  exchangeAndSaveZoom,
+  getZoomAccessTokenForUser,
+  disconnectZoomUser,
+  getZoomConnectionStatus,
+} from "./zoom/oauth";
 
 // 管理側 repo
 export * as bookingLinks from "./repo/booking-links";
