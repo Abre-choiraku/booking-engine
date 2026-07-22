@@ -69,6 +69,7 @@ export {
   getOAuth2Client,
 } from "./google/oauth";
 export { encryptToken, decryptToken } from "./google/crypto";
+export { getOwnerCalendar, getOwnerBusyTimes } from "./google/calendar";
 
 // Zoom 連携（per-owner OAuth ＋ 旧 S2S）
 export {
