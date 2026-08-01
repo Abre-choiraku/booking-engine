@@ -56,8 +56,9 @@ export {
   notifyReservationCancelled,
   notifyReservationReminder,
   createEmailNotifyAdapter,
+  createVailsNotifyAdapter,
 } from "./notify";
-export type { EmailNotifyOptions } from "./notify";
+export type { EmailNotifyOptions, VailsNotifyOptions } from "./notify";
 
 // Google カレンダー連携
 export {
