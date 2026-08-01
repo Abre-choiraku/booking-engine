@@ -27,6 +27,7 @@ type ReservationRow = {
   end_at: string;
   guest_name: string;
   guest_email: string | null;
+  line_user_id?: string | null;
   status: string;
   event_id: string | null;
   google_event_id: string | null;
@@ -40,7 +41,7 @@ async function loadByToken(ctoken: string): Promise<ReservationRow | null> {
   const { data } = await supabase
     .from("booking_reservations")
     .select(
-      "id, link_id, start_at, end_at, guest_name, guest_email, status, event_id, google_event_id, zoom_meeting_id, meet_url, link:booking_links(*)",
+      "id, link_id, start_at, end_at, guest_name, guest_email, line_user_id, status, event_id, google_event_id, zoom_meeting_id, meet_url, link:booking_links(*)",
     )
     .eq("cancel_token", ctoken)
     .maybeSingle();
@@ -223,6 +224,7 @@ export function createCancelHandler() {
       endIso: r.end_at,
       meetUrl: r.meet_url,
       cancelUrl: null,
+      lineFriendId: r.line_user_id ?? null,
     });
 
     return NextResponse.json({ ok: true });

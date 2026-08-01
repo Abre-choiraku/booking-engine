@@ -1,0 +1,73 @@
+import type { NotifyAdapter, NotifyPayload } from "../config";
+
+// ============================================================
+// VAILS（LINE運用管理）連携アダプタ — KICKOFF「lineモード」Phase 3 実装
+// ============================================================
+// 予約者が LINE 経由（lineFriendId あり）の場合、VAILS の Webhook に
+// イベントを POST する。VAILS 側でタグ付与・LINEプッシュ（確定/リマインド/
+// キャンセル）・シナリオ発火を行う。
+// lineFriendId が無い予約は fallback（メール等）へそのまま委譲する。
+// Webhook 失敗でも予約は巻き戻さない（呼び出し元が例外を握る設計を踏襲し、
+// ここでも fallback は必ず試みる）。
+// ============================================================
+
+export interface VailsNotifyOptions {
+  webhookUrl: string; // 例: https://<vails>/api/koroai/webhook
+  secret: string;     // VAILS 側 KOROAI_WEBHOOK_SECRET と一致させる
+  fallback?: NotifyAdapter; // lineFriendId が無い予約用（通常はメールアダプタ）
+}
+
+async function postEvent(
+  opts: VailsNotifyOptions,
+  event: "reservation.confirmed" | "reservation.cancelled" | "reservation.reminder",
+  payload: NotifyPayload,
+): Promise<void> {
+  const res = await fetch(opts.webhookUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-koroai-secret": opts.secret,
+    },
+    body: JSON.stringify({
+      event,
+      lineUserId: payload.lineFriendId,
+      linkTitle: payload.link?.title ?? "",
+      location: payload.link?.location ?? null,
+      guestName: payload.guestName,
+      startIso: payload.startIso,
+      endIso: payload.endIso,
+      meetUrl: payload.meetUrl,
+      cancelUrl: payload.cancelUrl,
+      reminderMessage: payload.reminderMessage ?? null,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`VAILS webhook ${event} failed: HTTP ${res.status}`);
+  }
+}
+
+export function createVailsNotifyAdapter(opts: VailsNotifyOptions): NotifyAdapter {
+  return {
+    async reservationConfirmed(payload: NotifyPayload): Promise<void> {
+      if (payload.lineFriendId) {
+        await postEvent(opts, "reservation.confirmed", payload);
+        return;
+      }
+      await opts.fallback?.reservationConfirmed(payload);
+    },
+    async reservationCancelled(payload: NotifyPayload): Promise<void> {
+      if (payload.lineFriendId) {
+        await postEvent(opts, "reservation.cancelled", payload);
+        return;
+      }
+      await opts.fallback?.reservationCancelled(payload);
+    },
+    async reservationReminder(payload: NotifyPayload): Promise<void> {
+      if (payload.lineFriendId) {
+        await postEvent(opts, "reservation.reminder", payload);
+        return;
+      }
+      await opts.fallback?.reservationReminder?.(payload);
+    },
+  };
+}

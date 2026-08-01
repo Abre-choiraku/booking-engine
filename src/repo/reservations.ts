@@ -107,7 +107,7 @@ export async function cancelReservationByOwner(
   const { data } = await supabase
     .from("booking_reservations")
     .select(
-      "id, link_id, start_at, end_at, guest_name, guest_email, meet_url, status, staff_id, google_event_id, zoom_meeting_id, link:booking_links!inner(owner_user_id, title, location, cancel_deadline_hours)",
+      "id, link_id, start_at, end_at, guest_name, guest_email, line_user_id, meet_url, status, staff_id, google_event_id, zoom_meeting_id, link:booking_links!inner(owner_user_id, title, location, cancel_deadline_hours)",
     )
     .eq("id", reservationId)
     .eq("link.owner_user_id", ownerId)
@@ -163,6 +163,7 @@ export async function cancelReservationByOwner(
       endIso: r.end_at,
       meetUrl: r.meet_url,
       cancelUrl: null,
+      lineFriendId: (r as { line_user_id?: string | null }).line_user_id ?? null,
     });
   } catch (e) {
     console.error("owner cancel notify failed:", (e as Error).message);
@@ -211,7 +212,7 @@ export async function sendDueReminders(): Promise<{ sent: number; checked: numbe
   const { data } = await supabase
     .from("booking_reservations")
     .select(
-      "id, start_at, end_at, guest_name, guest_email, meet_url, cancel_token, created_at, status, link:booking_links!inner(title, location, description, cancel_deadline_hours, owner_user_id, reminder_hours, reminders, reminder_message)",
+      "id, start_at, end_at, guest_name, guest_email, line_user_id, meet_url, cancel_token, created_at, status, link:booking_links!inner(title, location, description, cancel_deadline_hours, owner_user_id, reminder_hours, reminders, reminder_message)",
     )
     .eq("status", "confirmed")
     .gt("start_at", nowIso)
@@ -223,6 +224,7 @@ export async function sendDueReminders(): Promise<{ sent: number; checked: numbe
     end_at: string;
     guest_name: string;
     guest_email: string | null;
+    line_user_id: string | null;
     meet_url: string | null;
     cancel_token: string | null;
     created_at: string | null;
@@ -266,7 +268,7 @@ export async function sendDueReminders(): Promise<{ sent: number; checked: numbe
         .select("reservation_id");
       if (!claimed || claimed.length === 0) continue; // 既に送信済み
 
-      if (!r.guest_email) continue; // メール未登録は送れない
+      if (!r.guest_email && !r.line_user_id) continue; // メールもLINEも無ければ送れない
       // このリマインド固有の案内文→無ければリンク共通の案内文
       const resolvedMsg =
         c.message?.trim() || r.link?.reminder_message?.trim() || null;
@@ -280,6 +282,7 @@ export async function sendDueReminders(): Promise<{ sent: number; checked: numbe
           meetUrl: r.meet_url,
           cancelUrl: r.cancel_token ? `${baseUrl}/cancel/${r.cancel_token}` : null,
           reminderMessage: resolvedMsg,
+          lineFriendId: r.line_user_id,
         });
         sent++;
       } catch (e) {

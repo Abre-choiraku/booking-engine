@@ -49,6 +49,7 @@ async function insertReservation(
   guest: GuestInput,
   cancelToken: string,
   customAnswers: Record<string, string>,
+  lineUserId: string | null = null,
 ): Promise<{ reservation?: Record<string, unknown>; full?: boolean; error?: string }> {
   const capacity = slotCapacity(link);
   for (let seq = 0; seq < capacity; seq++) {
@@ -66,6 +67,7 @@ async function insertReservation(
         custom_answers: customAnswers,
         status: "confirmed",
         cancel_token: cancelToken,
+        line_user_id: lineUserId,
       })
       .select()
       .single();
@@ -92,6 +94,7 @@ export function createReserveHandler() {
       phone?: string;
       note?: string;
       custom_answers?: Record<string, string>;
+      line_user_id?: string;
     };
     try {
       body = await request.json();
@@ -106,6 +109,9 @@ export function createReserveHandler() {
       note: (body.note ?? "").trim(),
     };
     const startAt = body.start_at ?? "";
+    // LINE連携: VAILS配信のURL ?lu={userId} から渡される。形式が正しい時だけ採用
+    const rawLineUserId = (body.line_user_id ?? "").trim();
+    const lineUserId = /^U[0-9a-f]{32}$/.test(rawLineUserId) ? rawLineUserId : null;
 
     const { data: linkRow } = await supabase
       .from("booking_links")
@@ -191,6 +197,7 @@ export function createReserveHandler() {
       guest,
       cancelToken,
       customAnswers,
+      lineUserId,
     );
     if (ins.full) {
       return NextResponse.json(
@@ -466,6 +473,7 @@ export function createReserveHandler() {
       endIso,
       meetUrl,
       cancelUrl,
+      lineFriendId: lineUserId,
     });
 
     return NextResponse.json({

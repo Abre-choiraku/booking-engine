@@ -163,6 +163,8 @@ export type BookingReservation = {
   created_at: string;
   cancelled_at: string | null;
   reminder_sent_at?: string | null;
+  // LINE連携（VAILS）: LINE配信から ?lu= 付きで予約した場合の LINE userId
+  line_user_id?: string | null;
 };
 
 // ============================================================

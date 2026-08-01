@@ -15,6 +15,8 @@ import type { NotifyPayload } from "../config";
 export type { NotifyPayload, NotifyAdapter } from "../config";
 export { createEmailNotifyAdapter } from "./email";
 export type { EmailNotifyOptions } from "./email";
+export { createVailsNotifyAdapter } from "./vails";
+export type { VailsNotifyOptions } from "./vails";
 
 export async function notifyReservationConfirmed(payload: NotifyPayload): Promise<void> {
   const adapter = resolveNotify();
