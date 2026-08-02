@@ -27,6 +27,7 @@ export type OwnerReservation = {
   meet_url: string | null;
   cancel_token: string | null;
   created_at: string;
+  line_user_id?: string | null;
   // 付加情報
   link_title: string;
   link_type: "calendar" | "event" | "salon";
@@ -43,18 +44,19 @@ type Row = Omit<OwnerReservation, "link_title" | "link_type" | "menu_name" | "st
 // 主催者の予約を横断取得（既定=確定のみ・start_at 昇順）
 export async function listOwnerReservations(
   ownerId: string,
-  opts?: { includeCancelled?: boolean; fromIso?: string; toIso?: string; limit?: number },
+  opts?: { includeCancelled?: boolean; fromIso?: string; toIso?: string; limit?: number; lineUserId?: string },
 ): Promise<OwnerReservation[]> {
   const supabase = anonClient();
   let q = supabase
     .from("booking_reservations")
     .select(
-      "id, link_id, start_at, end_at, guest_name, guest_email, guest_phone, guest_note, custom_answers, status, staff_id, menu_id, total_price, meet_url, cancel_token, created_at, link:booking_links!inner(owner_user_id, title, link_type)",
+      "id, link_id, start_at, end_at, guest_name, guest_email, guest_phone, guest_note, custom_answers, status, staff_id, menu_id, total_price, meet_url, cancel_token, created_at, line_user_id, link:booking_links!inner(owner_user_id, title, link_type)",
     )
     .eq("link.owner_user_id", ownerId);
   if (!opts?.includeCancelled) q = q.eq("status", "confirmed");
   if (opts?.fromIso) q = q.gte("start_at", opts.fromIso);
   if (opts?.toIso) q = q.lt("start_at", opts.toIso);
+  if (opts?.lineUserId) q = q.eq("line_user_id", opts.lineUserId);
   q = q.order("start_at", { ascending: true }).limit(opts?.limit ?? 500);
   const { data, error } = await q;
   if (error) throw error;
@@ -91,6 +93,7 @@ export async function listOwnerReservations(
     meet_url: r.meet_url,
     cancel_token: r.cancel_token,
     created_at: r.created_at,
+    line_user_id: (r as { line_user_id?: string | null }).line_user_id ?? null,
     link_title: r.link?.title ?? "",
     link_type: r.link?.link_type ?? "calendar",
     menu_name: r.menu_id ? menuMap.get(r.menu_id) ?? null : null,
