@@ -274,12 +274,16 @@ export function createSalonReserveHandler() {
       phone?: string;
       note?: string;
       custom_answers?: Record<string, string>;
+      line_user_id?: string;
     };
     try {
       body = await request.json();
     } catch {
       return NextResponse.json({ error: "リクエストが不正です" }, { status: 400 });
     }
+    // LINE連携（VAILS）: 配信URLの ?lu={userId} から渡される
+    const rawLu = (body.line_user_id ?? "").trim();
+    const lineUserId = /^U[0-9a-f]{32}$/.test(rawLu) ? rawLu : null;
 
     const link = await loadSalonLink(token);
     if (!link || link.link_type !== "salon") {
@@ -393,6 +397,7 @@ export function createSalonReserveHandler() {
           total_price: totalPrice,
           status: "confirmed",
           cancel_token: cancelToken,
+          line_user_id: lineUserId,
         })
         .select()
         .single();
@@ -509,6 +514,7 @@ export function createSalonReserveHandler() {
       endIso,
       meetUrl,
       cancelUrl,
+      lineFriendId: lineUserId,
     });
 
     return NextResponse.json({
