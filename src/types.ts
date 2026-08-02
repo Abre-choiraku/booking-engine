@@ -90,6 +90,8 @@ export type BookingLink = {
   reminders?: ReminderConfig[] | null;
   // リマインドメールに差し込む任意の案内文（空=自動テンプレのみ）
   reminder_message?: string | null;
+  // 予約ページ上部に表示するヘッダー画像（イベント予約の見栄え用・任意）
+  header_image_url?: string | null;
   created_at?: string;
 };
 

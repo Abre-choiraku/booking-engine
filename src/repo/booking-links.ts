@@ -104,6 +104,7 @@ export async function createBookingLink(input: {
   reminder_hours?: number | null;
   reminders?: ReminderConfig[] | null;
   reminder_message?: string | null;
+  header_image_url?: string | null;
   // slot_mode = ranges / both のときの手動日時範囲
   windows?: { start_at: string; end_at: string }[];
   // ★パートナーAPI用: セッションではなく明示的に所有者を指定して作成する（VAILS連携）
@@ -154,6 +155,7 @@ export async function createBookingLink(input: {
       reminder_hours: input.reminder_hours ?? null,
       reminders: input.reminders ?? [],
       reminder_message: input.reminder_message ?? null,
+      header_image_url: input.header_image_url ?? null,
     })
     .select()
     .single();
