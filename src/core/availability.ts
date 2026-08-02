@@ -174,6 +174,18 @@ export async function collectBusy(
     const staffId = opts.staffId;
     const internal = await calendar.getInternalBusy(staffId, fromIso, toIso);
     busy.push(...internal);
+    // シフトブロック（直接登録の休み・時間帯ブロック）
+    {
+      const { data: blocks } = await supabase
+        .from("staff_time_blocks")
+        .select("start_at, end_at")
+        .eq("staff_id", staffId)
+        .lt("start_at", toIso)
+        .gt("end_at", fromIso);
+      for (const b of (blocks ?? []) as { start_at: string; end_at: string }[]) {
+        busy.push({ start: Date.parse(b.start_at), end: Date.parse(b.end_at) });
+      }
+    }
     // そのスタッフの確定予約（どのリンク経由でも塞ぐ）
     const { data: rs } = await supabase
       .from("booking_reservations")

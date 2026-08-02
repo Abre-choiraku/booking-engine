@@ -400,3 +400,68 @@ export async function listStaffWithMenus(
   }
   return staff.map((s) => ({ ...s, menu_ids: map.get(s.id) ?? [] }));
 }
+
+// ============================================================
+// シフトブロック（2026-08-03）: 日付単位の休み・時間帯ブロック
+// Googleカレンダー無しでも直接シフト管理できるようにする。
+// collectBusy の staff 分岐で busy として扱われる。
+// ============================================================
+export type StaffTimeBlock = {
+  id: string;
+  owner_user_id: string;
+  staff_id: string;
+  start_at: string;
+  end_at: string;
+  reason: string | null;
+};
+
+export async function listTimeBlocks(
+  ownerId: string,
+  staffId: string,
+  opts?: { fromIso?: string; toIso?: string },
+): Promise<StaffTimeBlock[]> {
+  const supabase = anonClient();
+  let q = supabase
+    .from("staff_time_blocks")
+    .select("id, owner_user_id, staff_id, start_at, end_at, reason")
+    .eq("owner_user_id", ownerId)
+    .eq("staff_id", staffId);
+  if (opts?.fromIso) q = q.gte("end_at", opts.fromIso);
+  if (opts?.toIso) q = q.lt("start_at", opts.toIso);
+  const { data, error } = await q.order("start_at", { ascending: true }).limit(500);
+  if (error) throw error;
+  return (data ?? []) as StaffTimeBlock[];
+}
+
+export async function createTimeBlock(input: {
+  ownerId: string;
+  staffId: string;
+  startIso: string;
+  endIso: string;
+  reason?: string | null;
+}): Promise<StaffTimeBlock> {
+  const supabase = anonClient();
+  const { data, error } = await supabase
+    .from("staff_time_blocks")
+    .insert({
+      owner_user_id: input.ownerId,
+      staff_id: input.staffId,
+      start_at: input.startIso,
+      end_at: input.endIso,
+      reason: input.reason ?? null,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as StaffTimeBlock;
+}
+
+export async function deleteTimeBlock(id: string, ownerId: string): Promise<void> {
+  const supabase = anonClient();
+  const { error } = await supabase
+    .from("staff_time_blocks")
+    .delete()
+    .eq("id", id)
+    .eq("owner_user_id", ownerId);
+  if (error) throw error;
+}
