@@ -106,9 +106,11 @@ export async function createBookingLink(input: {
   reminder_message?: string | null;
   // slot_mode = ranges / both のときの手動日時範囲
   windows?: { start_at: string; end_at: string }[];
+  // ★パートナーAPI用: セッションではなく明示的に所有者を指定して作成する（VAILS連携）
+  ownerUserId?: string;
 }): Promise<BookingLink> {
   const supabase = anonClient();
-  const ownerId = await currentOwnerId();
+  const ownerId = input.ownerUserId ?? (await currentOwnerId());
   if (!ownerId) throw new Error("ログインユーザーを特定できません");
 
   const { data, error } = await supabase
