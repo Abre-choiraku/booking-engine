@@ -45,6 +45,7 @@ export async function listStaff(ownerId: string): Promise<Staff[]> {
 export async function createStaff(input: {
   ownerId: string;
   name: string;
+  description?: string | null;
   displayOrder?: number;
 }): Promise<Staff> {
   const supabase = anonClient();
@@ -53,6 +54,7 @@ export async function createStaff(input: {
     .insert({
       owner_user_id: input.ownerId,
       name: input.name,
+      description: input.description ?? null,
       display_order: input.displayOrder ?? 0,
     })
     .select()
@@ -66,6 +68,7 @@ export async function updateStaff(
   ownerId: string,
   patch: {
     name?: string;
+    description?: string | null;
     active?: boolean;
     display_order?: number;
     image_url?: string | null;

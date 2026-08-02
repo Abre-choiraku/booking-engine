@@ -203,6 +203,7 @@ export type Staff = {
   id: string;
   owner_user_id: string;
   name: string;
+  description?: string | null;
   image_url: string | null;
   display_order: number;
   active: boolean;

@@ -130,6 +130,7 @@ export function createSalonInfoHandler() {
         .map((s) => ({
           id: s.id,
           name: s.name,
+          description: s.description ?? null,
           image_url: s.image_url,
           // 対応メニューもリンク許可メニューに intersect（スタッフ先フローの整合）
           menu_ids: menuAllow ? s.menu_ids.filter((id) => menuAllow.has(id)) : s.menu_ids,
