@@ -230,6 +230,7 @@ export async function updateBookingLink(
     reminder_hours?: number | null;
     reminders?: ReminderConfig[] | null;
     reminder_message?: string | null;
+    header_image_url?: string | null;
   },
   ownerId?: string,
 ): Promise<BookingLink> {
@@ -272,6 +273,7 @@ export async function updateBookingLink(
       reminder_hours: input.reminder_hours ?? null,
       reminders: input.reminders ?? [],
       reminder_message: input.reminder_message ?? null,
+      header_image_url: input.header_image_url ?? null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", id);
