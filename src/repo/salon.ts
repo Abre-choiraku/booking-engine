@@ -12,7 +12,7 @@ export type { Staff, Menu, MenuOption } from "../types";
 
 // 画像を salon-images バケットにアップロードして公開URLを返す（service role 必須）
 export async function uploadSalonImage(input: {
-  kind: "menu" | "staff";
+  kind: "menu" | "staff" | "event";
   id: string;
   bytes: Uint8Array;
   contentType: string;

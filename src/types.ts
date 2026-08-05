@@ -92,6 +92,8 @@ export type BookingLink = {
   reminder_message?: string | null;
   // 予約ページ上部に表示するヘッダー画像（イベント予約の見栄え用・任意）
   header_image_url?: string | null;
+  // 開催場所の Google マップ リンク（任意。未設定なら location 文字列から自動検索）
+  map_url?: string | null;
   created_at?: string;
 };
 

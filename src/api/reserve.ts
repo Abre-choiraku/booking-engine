@@ -182,7 +182,14 @@ export function createReserveHandler() {
 
     const startMs = Date.parse(startAt);
     const startIso = new Date(startMs).toISOString();
-    const endIso = new Date(startMs + link.duration_min * 60 * 1000).toISOString();
+    // イベント型は開催枠そのものが1件なので、終了時刻は指定された枠の終わりを使う
+    const eventWindow =
+      link.link_type === "event"
+        ? windows.find((w) => Date.parse(w.start_at) === startMs)
+        : undefined;
+    const endIso = eventWindow
+      ? new Date(Date.parse(eventWindow.end_at)).toISOString()
+      : new Date(startMs + link.duration_min * 60 * 1000).toISOString();
     const cancelToken = generateCancelToken();
     const isGroup = slotCapacity(link) > 1;
     const wantMeet = link.meeting_type === "meet";

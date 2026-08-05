@@ -105,6 +105,7 @@ export async function createBookingLink(input: {
   reminders?: ReminderConfig[] | null;
   reminder_message?: string | null;
   header_image_url?: string | null;
+  map_url?: string | null;
   // slot_mode = ranges / both のときの手動日時範囲
   windows?: { start_at: string; end_at: string }[];
   // ★パートナーAPI用: セッションではなく明示的に所有者を指定して作成する（VAILS連携）
@@ -156,6 +157,7 @@ export async function createBookingLink(input: {
       reminders: input.reminders ?? [],
       reminder_message: input.reminder_message ?? null,
       header_image_url: input.header_image_url ?? null,
+      map_url: input.map_url ?? null,
     })
     .select()
     .single();
@@ -231,6 +233,9 @@ export async function updateBookingLink(
     reminders?: ReminderConfig[] | null;
     reminder_message?: string | null;
     header_image_url?: string | null;
+    map_url?: string | null;
+    // 手動指定の日時範囲（イベント型の開催日時）。渡すと全入れ替え・省略時は既存維持
+    windows?: { start_at: string; end_at: string }[];
   },
   ownerId?: string,
 ): Promise<BookingLink> {
@@ -274,13 +279,32 @@ export async function updateBookingLink(
       reminders: input.reminders ?? [],
       reminder_message: input.reminder_message ?? null,
       header_image_url: input.header_image_url ?? null,
+      map_url: input.map_url ?? null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", id);
   if (ownerId) query = query.eq("owner_user_id", ownerId);
   const { data, error } = await query.select().single();
   if (error) throw error;
-  return data as BookingLink;
+  const link = data as BookingLink;
+
+  // 手動指定の日時範囲（イベント型の開催日時など）は「全入れ替え」で更新する。
+  // windows を渡さなかった場合（undefined）は既存を維持する。
+  if (input.windows !== undefined) {
+    const windows = input.windows.filter((w) => w.start_at && w.end_at);
+    await supabase.from("booking_link_windows").delete().eq("link_id", link.id);
+    if (windows.length > 0) {
+      const { error: wErr } = await supabase.from("booking_link_windows").insert(
+        windows.map((w) => ({
+          link_id: link.id,
+          start_at: w.start_at,
+          end_at: w.end_at,
+        })),
+      );
+      if (wErr) throw wErr;
+    }
+  }
+  return link;
 }
 
 export async function setBookingLinkStatus(

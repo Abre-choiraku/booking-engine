@@ -401,6 +401,12 @@ export async function computeAvailability(
       const ws = Date.parse(w.start_at);
       const we = Date.parse(w.end_at);
       if (Number.isNaN(ws) || Number.isNaN(we)) continue;
+      // イベント型: 指定した「◯月◯日 ◯時〜◯時」そのものが1つの開催枠。
+      // 時間で刻まないので、開催ごとに長さが違ってもよい。
+      if (link.link_type === "event") {
+        if (ws >= noticeLimit) candidateStarts.set(ws, we);
+        continue;
+      }
       for (let t = ws; t + durMs <= we; t += step) {
         if (t < noticeLimit) continue;
         candidateStarts.set(t, t + durMs);
@@ -492,6 +498,14 @@ export async function isSlotAvailable(
       const ws = Date.parse(w.start_at);
       const we = Date.parse(w.end_at);
       if (Number.isNaN(ws) || Number.isNaN(we)) continue;
+      // イベント型は開催枠そのもの（開始が一致すればよい）
+      if (link.link_type === "event") {
+        if (startMs === ws) {
+          onGrid = true;
+          break;
+        }
+        continue;
+      }
       if (startMs >= ws && endMs <= we && (startMs - ws) % step === 0) {
         onGrid = true;
         break;

@@ -76,6 +76,7 @@ export function createSlotsHandler() {
       description: l.description,
       location: l.location,
       header_image_url: (l as { header_image_url?: string | null }).header_image_url ?? null,
+      map_url: (l as { map_url?: string | null }).map_url ?? null,
       duration_min: l.duration_min,
       meeting_type: l.meeting_type,
       link_type: l.link_type,
