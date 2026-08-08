@@ -98,4 +98,11 @@ export type { Staff, Menu } from "./types";
 export * as owners from "./repo/owners";
 export type { OwnerUser } from "./repo/owners";
 export * as reservations from "./repo/reservations";
+// 改善要望（利用者フィードバック）
+export * as improvements from "./repo/improvements";
+export type {
+  ImprovementRequest,
+  ImprovementCategory,
+  ImprovementStatus,
+} from "./repo/improvements";
 export type { OwnerReservation } from "./repo/reservations";
