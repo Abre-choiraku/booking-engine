@@ -169,6 +169,11 @@ export async function collectBusy(
   const busy: Busy[] = [];
   const excludeOwn = opts?.excludeOwnLink ?? false;
 
+  // ---- イベント型: 主催者が「◯月◯日 ◯時〜」と明示的に決めた開催枠なので、
+  // 他の予定（主催者のGoogle予定・他リンクの予約）では塞がない。
+  // 受付可否は定員（confirmed 件数）と手動ロックだけで判定する。
+  if (!opts?.staffId && link.link_type === "event") return busy;
+
   // ---- サロン型: 指定スタッフの busy（そのスタッフの Google + 全予約 + 内部予定）----
   if (opts?.staffId) {
     const staffId = opts.staffId;
