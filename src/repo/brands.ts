@@ -24,6 +24,22 @@ export async function getBrand(ownerId: string): Promise<TenantBrand | null> {
   return (data as TenantBrand) ?? null;
 }
 
+// リンク単位の店名指定があれば表示名を上書きして返す（VAILS連携）。
+// 別事業者のロゴが出ないよう、上書き時はロゴを外しアクセント色だけ引き継ぐ。
+export function withLinkBrand(
+  brand: TenantBrand | null,
+  linkDisplayName?: string | null,
+): TenantBrand | null {
+  const name = (linkDisplayName ?? "").trim();
+  if (!name) return brand;
+  return {
+    owner_user_id: brand?.owner_user_id ?? "",
+    display_name: name,
+    logo_url: null,
+    accent_color: brand?.accent_color ?? null,
+  };
+}
+
 // ブランドを作成/更新
 export async function upsertBrand(input: {
   ownerId: string;

@@ -94,6 +94,8 @@ export type BookingLink = {
   header_image_url?: string | null;
   // 開催場所の Google マップ リンク（任意。未設定なら location 文字列から自動検索）
   map_url?: string | null;
+  // リンク単位のブランド店名（VAILS連携: null = オーナーの tenant_brands を使う）
+  brand_display_name?: string | null;
   created_at?: string;
 };
 

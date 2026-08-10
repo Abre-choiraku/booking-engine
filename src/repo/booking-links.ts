@@ -106,6 +106,8 @@ export async function createBookingLink(input: {
   reminder_message?: string | null;
   header_image_url?: string | null;
   map_url?: string | null;
+  // リンク単位のブランド店名（VAILS連携: null = オーナーの tenant_brands を使う）
+  brand_display_name?: string | null;
   // slot_mode = ranges / both のときの手動日時範囲
   windows?: { start_at: string; end_at: string }[];
   // ★パートナーAPI用: セッションではなく明示的に所有者を指定して作成する（VAILS連携）
@@ -158,6 +160,7 @@ export async function createBookingLink(input: {
       reminder_message: input.reminder_message ?? null,
       header_image_url: input.header_image_url ?? null,
       map_url: input.map_url ?? null,
+      brand_display_name: input.brand_display_name?.trim() || null,
     })
     .select()
     .single();
@@ -234,6 +237,8 @@ export async function updateBookingLink(
     reminder_message?: string | null;
     header_image_url?: string | null;
     map_url?: string | null;
+    // リンク単位のブランド店名。undefined = 既存維持（後方互換）、null/空 = クリア
+    brand_display_name?: string | null;
     // 手動指定の日時範囲（イベント型の開催日時）。渡すと全入れ替え・省略時は既存維持
     windows?: { start_at: string; end_at: string }[];
   },
@@ -280,6 +285,9 @@ export async function updateBookingLink(
       reminder_message: input.reminder_message ?? null,
       header_image_url: input.header_image_url ?? null,
       map_url: input.map_url ?? null,
+      ...(input.brand_display_name !== undefined
+        ? { brand_display_name: input.brand_display_name?.trim() || null }
+        : {}),
       updated_at: new Date().toISOString(),
     })
     .eq("id", id);

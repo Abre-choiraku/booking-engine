@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { anonClient, resolveHooks } from "../config";
-import { getBrand } from "../repo/brands";
+import { getBrand, withLinkBrand } from "../repo/brands";
 import * as salon from "../repo/salon";
 import {
   computeSalonAvailability,
@@ -94,11 +94,12 @@ export function createSalonInfoHandler() {
     if (!link || link.link_type !== "salon") {
       return NextResponse.json({ error: "not_found" }, { status: 404 });
     }
-    const [menus, staffWithMenus, brand] = await Promise.all([
+    const [menus, staffWithMenus, ownerBrand] = await Promise.all([
       salon.listMenus(link.owner_user_id),
       salon.listStaffWithMenus(link.owner_user_id),
       getBrand(link.owner_user_id),
     ]);
+    const brand = withLinkBrand(ownerBrand, link.brand_display_name);
     // リンクごとの絞り込み（未設定なら全部）
     const menuAllow = allowedMenuIdSet(link, menus);
     const staffAllow = allowedStaffIdSet(link);

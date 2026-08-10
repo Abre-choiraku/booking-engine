@@ -6,7 +6,7 @@ import {
   fetchConfirmedGuests,
   slotCapacity,
 } from "../core/availability";
-import { getBrand } from "../repo/brands";
+import { getBrand, withLinkBrand } from "../repo/brands";
 import type { BookingLinkRow } from "../types";
 
 // ============================================================
@@ -36,7 +36,7 @@ export function createSlotsHandler() {
       return NextResponse.json({ error: "not_found" }, { status: 404 });
     }
     const l = link as BookingLinkRow;
-    const brand = await getBrand(l.owner_user_id);
+    const brand = withLinkBrand(await getBrand(l.owner_user_id), l.brand_display_name);
     const deadlinePassed = !!l.deadline_at && Date.now() > Date.parse(l.deadline_at);
     if (l.status !== "active" || deadlinePassed) {
       return NextResponse.json({
