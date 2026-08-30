@@ -32,6 +32,7 @@ async function postEvent(
       event,
       lineUserId: payload.lineFriendId,
       linkTitle: payload.link?.title ?? "",
+      baseTitle: payload.baseTitle ?? payload.link?.title ?? "",
       location: payload.link?.location ?? null,
       guestName: payload.guestName,
       startIso: payload.startIso,

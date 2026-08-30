@@ -37,6 +37,10 @@ export interface NotifyPayload {
   reminderMessage?: string | null;
   // line モード用（Phase 3）: 予約者の LINE friend_id
   lineFriendId?: string | null;
+  // ★リンク名そのもの（メニュー・オプションを含まない安定名。2026-08-31）。
+  //   link.title は表示用に「リンク名｜メニュー（＋オプション）」へ加工されることがあり、
+  //   VAILS側のタグ「予約：{名前}」やCV定義のキーには不安定。タグ用にはこちらを使う
+  baseTitle?: string;
 }
 export interface NotifyAdapter {
   reservationConfirmed(payload: NotifyPayload): Promise<void>;
