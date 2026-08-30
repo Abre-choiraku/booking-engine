@@ -508,7 +508,9 @@ export function createSalonReserveHandler() {
     const baseUrl = getEngineConfig().publicBaseUrl ?? request.nextUrl.origin;
     const cancelUrl = `${baseUrl}/cancel/${cancelToken}`;
     await notifyReservationConfirmed({
-      link: { ...link, title: `${link.title}｜${menu.name}` },
+      // ★選択オプションも通知タイトルに含める（2026-08-30 CEO点検指摘:
+      //   「カット＋トリートメント」のように選んだ内容が確定通知に出ないと当日に食い違う）
+      link: { ...link, title: `${link.title}｜${menu.name}${options.length > 0 ? `（＋${options.map((o) => o.name).join("・")}）` : ""}` },
       guestName: guest.name,
       guestEmail: guest.email || null,
       startIso,
