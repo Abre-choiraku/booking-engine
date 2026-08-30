@@ -168,6 +168,17 @@ export async function collectBusy(
   const calendar = resolveCalendar();
   const busy: Busy[] = [];
   const excludeOwn = opts?.excludeOwnLink ?? false;
+  // ★予約の前後バッファ（2026-08-30 CEO要望）: 既存予約の前後に準備・片付け時間を確保する。
+  //   既存予約ブロックを [開始-前バッファ, 終了+後バッファ] に広げることで、
+  //   「前の予約の終わり直後」「次の予約の直前」に食い込む新規予約を弾く。
+  //   予約由来のブロックだけに適用（Google予定・シフトブロックは本人管理のためそのまま）。
+  //   カラム未追加のDBでも undefined ?? 0 で従来動作。
+  const bufBefore = ((link as { buffer_before_min?: number | null }).buffer_before_min ?? 0) * 60_000;
+  const bufAfter = ((link as { buffer_after_min?: number | null }).buffer_after_min ?? 0) * 60_000;
+  const reservationBusy = (startIso: string, endIso: string): Busy => ({
+    start: Date.parse(startIso) - bufBefore,
+    end: Date.parse(endIso) + bufAfter,
+  });
 
   // ---- イベント型: 主催者が「◯月◯日 ◯時〜」と明示的に決めた開催枠なので、
   // 他の予定（主催者のGoogle予定・他リンクの予約）では塞がない。
@@ -191,7 +202,7 @@ export async function collectBusy(
         busy.push({ start: Date.parse(b.start_at), end: Date.parse(b.end_at) });
       }
     }
-    // そのスタッフの確定予約（どのリンク経由でも塞ぐ）
+    // そのスタッフの確定予約（どのリンク経由でも塞ぐ。前後バッファ込み）
     const { data: rs } = await supabase
       .from("booking_reservations")
       .select("start_at, end_at")
@@ -200,7 +211,7 @@ export async function collectBusy(
       .lt("start_at", toIso)
       .gt("end_at", fromIso);
     for (const r of rs ?? []) {
-      busy.push({ start: Date.parse(r.start_at), end: Date.parse(r.end_at) });
+      busy.push(reservationBusy(r.start_at, r.end_at));
     }
     // スタッフ本人の Google 予定
     try {
@@ -265,7 +276,7 @@ export async function collectBusy(
     .gt("end_at", fromIso);
   for (const r of reservations ?? []) {
     if (excludeOwn && r.link_id === link.id) continue;
-    busy.push({ start: Date.parse(r.start_at), end: Date.parse(r.end_at) });
+    busy.push(reservationBusy(r.start_at, r.end_at));
   }
 
   // 3. Google カレンダー（連携済みの場合のみ。失敗しても続行）

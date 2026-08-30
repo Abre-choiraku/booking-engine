@@ -59,6 +59,10 @@ export type BookingLink = {
   // 曜日別・祝日別の受付時間（最優先。あれば weekdays/time_ranges/exclude_holidays より優先）
   day_hours?: DayHours | null;
   buffer_min: number;
+  // ★予約の前後バッファ（分）。既存予約の前後にこの分だけ空けてから次の予約を受ける
+  //   （準備・片付け時間の確保。2026-08-30）。null/未設定 = 0
+  buffer_before_min?: number | null;
+  buffer_after_min?: number | null;
   min_notice_hours: number;
   status: "active" | "paused";
   // hours=営業時間グリッド / ranges=手動範囲 / both=併用 / anytime=終日（Google空きのみ）

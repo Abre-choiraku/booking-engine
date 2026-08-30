@@ -76,6 +76,8 @@ export async function createBookingLink(input: {
   project_id?: string | null;
   duration_min: number;
   slot_interval_min?: number | null;
+  buffer_before_min?: number | null;
+  buffer_after_min?: number | null;
   window_days: number;
   day_start: string;
   day_end: string;
@@ -128,6 +130,9 @@ export async function createBookingLink(input: {
       owner_user_id: ownerId,
       duration_min: input.duration_min,
       slot_interval_min: input.slot_interval_min ?? null,
+      // ★バッファ列はマイグレーション未適用のDBでも動くよう、値がある時だけ送る
+      ...(input.buffer_before_min != null ? { buffer_before_min: input.buffer_before_min } : {}),
+      ...(input.buffer_after_min != null ? { buffer_after_min: input.buffer_after_min } : {}),
       window_days: input.window_days,
       day_start: input.day_start,
       day_end: input.day_end,
@@ -207,6 +212,8 @@ export async function updateBookingLink(
     location?: string | null;
     duration_min: number;
     slot_interval_min?: number | null;
+  buffer_before_min?: number | null;
+  buffer_after_min?: number | null;
     window_days: number;
     day_start: string;
     day_end: string;
@@ -253,6 +260,9 @@ export async function updateBookingLink(
       location: input.location ?? null,
       duration_min: input.duration_min,
       slot_interval_min: input.slot_interval_min ?? null,
+      // ★バッファ列はマイグレーション未適用のDBでも動くよう、値がある時だけ送る
+      ...(input.buffer_before_min != null ? { buffer_before_min: input.buffer_before_min } : {}),
+      ...(input.buffer_after_min != null ? { buffer_after_min: input.buffer_after_min } : {}),
       window_days: input.window_days,
       day_start: input.day_start,
       day_end: input.day_end,
