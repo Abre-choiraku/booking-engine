@@ -6,7 +6,7 @@ import {
   computeSalonAvailability,
   isSalonSlotAvailable,
 } from "../core/availability";
-import { getOwnerCalendar } from "../google/calendar";
+import { getOwnerCalendarTarget, DEFAULT_CALENDAR_ID } from "../google/calendar";
 import { createZoomMeetingForUser } from "../zoom";
 import { notifyReservationConfirmed } from "../notify";
 import { getEngineConfig } from "../config";
@@ -441,7 +441,9 @@ export function createSalonReserveHandler() {
       }
     }
 
-    const gcal = await getOwnerCalendar(staffId); // スタッフ本人の Google
+    const gtarget = await getOwnerCalendarTarget(staffId); // スタッフ本人の Google
+    const gcal = gtarget?.gcal ?? null;
+    const calId = gtarget?.calendarId ?? DEFAULT_CALENDAR_ID;
     if (gcal) {
       try {
         const descLines = [
@@ -453,7 +455,7 @@ export function createSalonReserveHandler() {
           meetUrl ? `Web会議: ${meetUrl}` : null,
         ].filter(Boolean) as string[];
         const res = await gcal.events.insert({
-          calendarId: "primary",
+          calendarId: calId,
           conferenceDataVersion: wantMeet ? 1 : 0,
           requestBody: {
             summary: `${menu.name}（${guest.name}様）`,
@@ -610,10 +612,12 @@ export async function createSalonAdminReservation(
 
   // スタッフの Google カレンダーへ（連携時のみ・任意）
   try {
-    const gcal = await getOwnerCalendar(staffId);
+    const gtarget = await getOwnerCalendarTarget(staffId);
+    const gcal = gtarget?.gcal ?? null;
+    const calId = gtarget?.calendarId ?? DEFAULT_CALENDAR_ID;
     if (gcal) {
       const res = await gcal.events.insert({
-        calendarId: "primary",
+        calendarId: calId,
         requestBody: {
           summary: `${menu.name}（${name}様）※代理`,
           description: [

@@ -1,16 +1,35 @@
-import { getAuthedClientForUser } from "./oauth";
+import type { calendar_v3 } from "googleapis";
+import {
+  getAuthedClientAndCalendar,
+  normalizeCalendarId,
+  DEFAULT_CALENDAR_ID,
+} from "./oauth";
 
-// 主催者の Google Calendar クライアントを取得（未連携・失敗なら null）。
-// reserve / cancel 両ハンドラで共用。
-export async function getOwnerCalendar(ownerUserId: string) {
+// 主催者（またはスタッフ）の Google Calendar クライアント＋連携先カレンダーIDを取得。
+// 未連携・失敗なら null。calendarId は google_auth_tokens.calendar_id（既定 primary）。
+export async function getOwnerCalendarTarget(ownerUserId: string): Promise<{
+  gcal: calendar_v3.Calendar;
+  calendarId: string;
+} | null> {
   try {
-    const authed = await getAuthedClientForUser(ownerUserId);
+    const authed = await getAuthedClientAndCalendar(ownerUserId);
     if (!authed) return null;
     const { google } = await import("googleapis");
-    return google.calendar({ version: "v3", auth: authed });
+    return {
+      gcal: google.calendar({ version: "v3", auth: authed.client }),
+      calendarId: authed.calendarId,
+    };
   } catch {
     return null;
   }
+}
+
+// 主催者の Google Calendar クライアントを取得（未連携・失敗なら null）。
+// reserve / cancel 両ハンドラで共用。※カレンダーIDが必要な場面では
+// getOwnerCalendarTarget を使うこと（別カレンダー連携に対応するため）。
+export async function getOwnerCalendar(ownerUserId: string) {
+  const target = await getOwnerCalendarTarget(ownerUserId);
+  return target?.gcal ?? null;
 }
 
 // 主催者の Google カレンダーの busy（予定あり）区間を期間指定で取得。
@@ -22,10 +41,10 @@ export async function getOwnerBusyTimes(
   toIso: string,
 ): Promise<{ start: string; end: string }[]> {
   try {
-    const gcal = await getOwnerCalendar(ownerUserId);
-    if (!gcal) return [];
-    const list = await gcal.events.list({
-      calendarId: "primary",
+    const target = await getOwnerCalendarTarget(ownerUserId);
+    if (!target) return [];
+    const list = await target.gcal.events.list({
+      calendarId: target.calendarId,
       timeMin: fromIso,
       timeMax: toIso,
       singleEvents: true,
@@ -50,3 +69,40 @@ export async function getOwnerBusyTimes(
     return [];
   }
 }
+
+// 指定カレンダーIDに実際にアクセスできるか確認する（保存前チェック用）。
+// events.list を1件だけ叩いて権限・存在を確かめる（calendar.events スコープで通る）。
+export type CalendarAccessError =
+  | "not_connected" // Google 未連携
+  | "not_found" // そのIDのカレンダーが無い
+  | "forbidden" // 権限が無い
+  | "unknown"; // それ以外（通信エラー等）
+
+export async function verifyCalendarAccess(
+  userId: string,
+  calendarId: string,
+): Promise<{ ok: boolean; code?: CalendarAccessError }> {
+  const id = normalizeCalendarId(calendarId);
+  const authed = await getAuthedClientAndCalendar(userId);
+  if (!authed) return { ok: false, code: "not_connected" };
+  try {
+    const { google } = await import("googleapis");
+    const gcal = google.calendar({ version: "v3", auth: authed.client });
+    await gcal.events.list({
+      calendarId: id,
+      maxResults: 1,
+      timeMin: new Date().toISOString(),
+      singleEvents: true,
+    });
+    return { ok: true };
+  } catch (e) {
+    const err = e as { code?: number; status?: number; message?: string };
+    const status = err.code ?? err.status;
+    if (status === 404) return { ok: false, code: "not_found" };
+    if (status === 403) return { ok: false, code: "forbidden" };
+    console.error("verifyCalendarAccess failed:", err.message);
+    return { ok: false, code: "unknown" };
+  }
+}
+
+export { DEFAULT_CALENDAR_ID };
