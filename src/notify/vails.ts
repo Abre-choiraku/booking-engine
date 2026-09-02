@@ -30,6 +30,14 @@ async function postEvent(
     },
     body: JSON.stringify({
       event,
+      // ★どのアカウントの予約かを「イベント自身」に必ず載せる（2026-09-02）。
+      //   これが無いと VAILS 側は「その人が友だちになっているアカウント」から
+      //   送信元を推測するしかなく、同じ人が2アカウントの友だちになった瞬間に
+      //   別のお店の回線から通知が出る。100アカウント運用では確実に起きる。
+      //   ・clientId      … 予約ページに焼き付けた VAILS のアカウントID（最優先）
+      //   ・ownerUserId   … 予約システム側の店舗ID（VAILS の clients と1:1）
+      clientId: payload.link?.partner_client_id ?? null,
+      ownerUserId: payload.link?.owner_user_id ?? null,
       lineUserId: payload.lineFriendId,
       linkTitle: payload.link?.title ?? "",
       baseTitle: payload.baseTitle ?? payload.link?.title ?? "",
