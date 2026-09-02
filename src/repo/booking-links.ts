@@ -114,6 +114,8 @@ export async function createBookingLink(input: {
   windows?: { start_at: string; end_at: string }[];
   // ★パートナーAPI用: セッションではなく明示的に所有者を指定して作成する（VAILS連携）
   ownerUserId?: string;
+  // ★パートナーAPI用: この予約ページがどの VAILS アカウントのものかを焼き付ける（2026-09-02）
+  partner_client_id?: string | null;
 }): Promise<BookingLink> {
   const supabase = anonClient();
   const ownerId = input.ownerUserId ?? (await currentOwnerId());
@@ -128,6 +130,8 @@ export async function createBookingLink(input: {
       location: input.location ?? null,
       project_id: input.project_id ?? null,
       owner_user_id: ownerId,
+      // ★マイグレーション未適用のDBでも動くよう、値がある時だけ送る
+      ...(input.partner_client_id ? { partner_client_id: input.partner_client_id } : {}),
       duration_min: input.duration_min,
       slot_interval_min: input.slot_interval_min ?? null,
       // ★バッファ列はマイグレーション未適用のDBでも動くよう、値がある時だけ送る
@@ -239,6 +243,11 @@ export async function updateBookingLink(
     phone_mode: FieldMode;
     custom_fields: CustomField[];
     default_view: "day" | "week" | "month";
+    // ★リマインド関連は undefined = 既存維持（消さない）。2026-09-02
+    //   以前は `reminders: input.reminders ?? []` で保存していたため、
+    //   本文から reminders を省いた更新（KOROAIの管理画面から項目を絞って更新した等）で
+    //   設定済みのリマインドが黙って全消えしていた。
+    //   「送られてこなかった項目は消さない」＝明示的に [] を渡したときだけ全OFFにする。
     reminder_hours?: number | null;
     reminders?: ReminderConfig[] | null;
     reminder_message?: string | null;
@@ -246,6 +255,8 @@ export async function updateBookingLink(
     map_url?: string | null;
     // リンク単位のブランド店名。undefined = 既存維持（後方互換）、null/空 = クリア
     brand_display_name?: string | null;
+    // どの VAILS アカウントのものか。undefined = 既存維持
+    partner_client_id?: string | null;
     // 手動指定の日時範囲（イベント型の開催日時）。渡すと全入れ替え・省略時は既存維持
     windows?: { start_at: string; end_at: string }[];
   },
@@ -290,13 +301,18 @@ export async function updateBookingLink(
       phone_mode: input.phone_mode,
       custom_fields: input.custom_fields,
       default_view: input.default_view,
-      reminder_hours: input.reminder_hours ?? null,
-      reminders: input.reminders ?? [],
-      reminder_message: input.reminder_message ?? null,
+      // ★リマインド関連は「送られてきたときだけ」書き換える（2026-09-02）。
+      //   undefined を ?? で null/[] に落とすと、項目を省いた更新で既存設定が消える。
+      ...(input.reminder_hours !== undefined ? { reminder_hours: input.reminder_hours } : {}),
+      ...(input.reminders !== undefined ? { reminders: input.reminders ?? [] } : {}),
+      ...(input.reminder_message !== undefined ? { reminder_message: input.reminder_message } : {}),
       header_image_url: input.header_image_url ?? null,
       map_url: input.map_url ?? null,
       ...(input.brand_display_name !== undefined
         ? { brand_display_name: input.brand_display_name?.trim() || null }
+        : {}),
+      ...(input.partner_client_id !== undefined
+        ? { partner_client_id: input.partner_client_id || null }
         : {}),
       updated_at: new Date().toISOString(),
     })
