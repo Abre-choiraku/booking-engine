@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { anonClient, resolveCalendar, resolveHooks } from "../config";
 import { notifyReservationCancelled } from "../notify";
-import { getOwnerCalendar } from "../google/calendar";
+import { getOwnerCalendarTarget, DEFAULT_CALENDAR_ID } from "../google/calendar";
 import { deleteZoomMeetingForUser } from "../zoom";
 import { slotCapacity } from "../core/availability";
 import type { BookingLinkRow } from "../types";
@@ -135,10 +135,12 @@ export function createCancelHandler() {
         if ((members ?? []).length === 0) {
           // 最後の1人 → 共有予定ごと削除
           if (se?.google_event_id) {
-            const gcal = await getOwnerCalendar(r.link.owner_user_id);
+            const gtarget = await getOwnerCalendarTarget(r.link.owner_user_id);
+            const gcal = gtarget?.gcal ?? null;
+            const calId = gtarget?.calendarId ?? DEFAULT_CALENDAR_ID;
             if (gcal) {
               await gcal.events
-                .delete({ calendarId: "primary", eventId: se.google_event_id })
+                .delete({ calendarId: calId, eventId: se.google_event_id })
                 .catch(() => {});
             }
           }
@@ -161,14 +163,16 @@ export function createCancelHandler() {
             );
           }
           if (se?.google_event_id) {
-            const gcal = await getOwnerCalendar(r.link.owner_user_id);
+            const gtarget = await getOwnerCalendarTarget(r.link.owner_user_id);
+            const gcal = gtarget?.gcal ?? null;
+            const calId = gtarget?.calendarId ?? DEFAULT_CALENDAR_ID;
             if (gcal) {
               const attendees = (members ?? [])
                 .filter((m) => m.guest_email)
                 .map((m) => ({ email: m.guest_email as string, displayName: m.guest_name }));
               await gcal.events
                 .patch({
-                  calendarId: "primary",
+                  calendarId: calId,
                   eventId: se.google_event_id,
                   requestBody: {
                     description: `参加者:\n${list}`,
@@ -186,10 +190,12 @@ export function createCancelHandler() {
       // ==== 1対1: Google 予定 + Zoom + ミラー予定を削除 ====
       try {
         if (r.google_event_id) {
-          const gcal = await getOwnerCalendar(r.link.owner_user_id);
+          const gtarget = await getOwnerCalendarTarget(r.link.owner_user_id);
+          const gcal = gtarget?.gcal ?? null;
+          const calId = gtarget?.calendarId ?? DEFAULT_CALENDAR_ID;
           if (gcal) {
             await gcal.events
-              .delete({ calendarId: "primary", eventId: r.google_event_id })
+              .delete({ calendarId: calId, eventId: r.google_event_id })
               .catch(() => {});
           }
         }

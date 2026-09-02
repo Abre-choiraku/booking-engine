@@ -1,5 +1,5 @@
 import { anonClient, getEngineConfig } from "../config";
-import { getOwnerCalendar } from "../google/calendar";
+import { getOwnerCalendarTarget, DEFAULT_CALENDAR_ID } from "../google/calendar";
 import { deleteZoomMeetingForUser } from "../zoom";
 import { notifyReservationCancelled, notifyReservationReminder } from "../notify";
 import type { BookingLinkRow, ReminderConfig } from "../types";
@@ -144,10 +144,12 @@ export async function cancelReservationByOwner(
   try {
     if (r.google_event_id) {
       const calOwner = r.staff_id ?? ownerId;
-      const gcal = await getOwnerCalendar(calOwner);
+      const gtarget = await getOwnerCalendarTarget(calOwner);
+      const gcal = gtarget?.gcal ?? null;
+      const calId = gtarget?.calendarId ?? DEFAULT_CALENDAR_ID;
       if (gcal) {
         await gcal.events
-          .delete({ calendarId: "primary", eventId: r.google_event_id })
+          .delete({ calendarId: calId, eventId: r.google_event_id })
           .catch(() => {});
       }
     }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { anonClient, resolveCalendar, resolveHooks, getEngineConfig } from "../config";
 import { notifyReservationConfirmed } from "../notify";
-import { getOwnerCalendar } from "../google/calendar";
+import { getOwnerCalendarTarget, DEFAULT_CALENDAR_ID } from "../google/calendar";
 import { createZoomMeetingForUser } from "../zoom";
 import { isSlotAvailable, fetchWindows, slotCapacity } from "../core/availability";
 import type { BookingLinkRow } from "../types";
@@ -263,11 +263,13 @@ export function createReserveHandler() {
       });
       eventId = mirror?.id ?? null;
 
-      const gcal = await getOwnerCalendar(link.owner_user_id);
+      const gtarget = await getOwnerCalendarTarget(link.owner_user_id);
+      const gcal = gtarget?.gcal ?? null;
+      const calId = gtarget?.calendarId ?? DEFAULT_CALENDAR_ID;
       if (gcal) {
         try {
           const res = await gcal.events.insert({
-            calendarId: "primary",
+            calendarId: calId,
             conferenceDataVersion: wantMeet ? 1 : 0,
             requestBody: {
               summary: `${link.title}（${guest.name}様）`,
@@ -337,11 +339,13 @@ export function createReserveHandler() {
         });
         eventId = mirror?.id ?? null;
 
-        const gcal = await getOwnerCalendar(link.owner_user_id);
+        const gtarget = await getOwnerCalendarTarget(link.owner_user_id);
+        const gcal = gtarget?.gcal ?? null;
+        const calId = gtarget?.calendarId ?? DEFAULT_CALENDAR_ID;
         if (gcal) {
           try {
             const res = await gcal.events.insert({
-              calendarId: "primary",
+              calendarId: calId,
               conferenceDataVersion: wantMeet ? 1 : 0,
               requestBody: {
                 summary: `${link.title}（グループ）`,
@@ -424,13 +428,15 @@ export function createReserveHandler() {
             );
           }
           if (slotGoogleId) {
-            const gcal = await getOwnerCalendar(link.owner_user_id);
+            const gtarget = await getOwnerCalendarTarget(link.owner_user_id);
+            const gcal = gtarget?.gcal ?? null;
+            const calId = gtarget?.calendarId ?? DEFAULT_CALENDAR_ID;
             if (gcal) {
               const attendees = (members ?? [])
                 .filter((m) => m.guest_email)
                 .map((m) => ({ email: m.guest_email as string, displayName: m.guest_name }));
               await gcal.events.patch({
-                calendarId: "primary",
+                calendarId: calId,
                 eventId: slotGoogleId,
                 requestBody: {
                   description: `参加者:\n${list}`,

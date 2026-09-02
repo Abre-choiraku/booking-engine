@@ -215,20 +215,28 @@ export async function collectBusy(
     }
     // スタッフ本人の Google 予定
     try {
-      const { getAuthedClientForUser } = await import("../google/oauth");
-      const authed = await getAuthedClientForUser(staffId);
+      const { getAuthedClientAndCalendar } = await import("../google/oauth");
+      const authed = await getAuthedClientAndCalendar(staffId);
       if (authed) {
         const { google } = await import("googleapis");
-        const gcal = google.calendar({ version: "v3", auth: authed });
-        const fb = await gcal.freebusy.query({
-          requestBody: { timeMin: fromIso, timeMax: toIso, items: [{ id: "primary" }] },
+        const gcal = google.calendar({ version: "v3", auth: authed.client });
+        // events.list を使う（連携先が別カレンダーでも calendar.events スコープで確実に読める）
+        const list = await gcal.events.list({
+          calendarId: authed.calendarId,
+          timeMin: fromIso,
+          timeMax: toIso,
+          singleEvents: true,
+          maxResults: 2500,
         });
-        for (const p of fb.data.calendars?.primary?.busy ?? []) {
-          if (p.start && p.end) busy.push({ start: Date.parse(p.start), end: Date.parse(p.end) });
+        for (const ev of list.data.items ?? []) {
+          if (ev.status === "cancelled" || ev.transparency === "transparent") continue;
+          const s = ev.start?.dateTime ?? (ev.start?.date ? `${ev.start.date}T00:00:00+09:00` : null);
+          const e = ev.end?.dateTime ?? (ev.end?.date ? `${ev.end.date}T00:00:00+09:00` : null);
+          if (s && e) busy.push({ start: Date.parse(s), end: Date.parse(e) });
         }
       }
     } catch (e) {
-      console.error("staff freebusy failed:", (e as Error).message);
+      console.error("staff google busy failed:", (e as Error).message);
     }
     return busy;
   }
@@ -281,45 +289,30 @@ export async function collectBusy(
 
   // 3. Google カレンダー（連携済みの場合のみ。失敗しても続行）
   try {
-    const { getAuthedClientForUser } = await import("../google/oauth");
-    const authed = await getAuthedClientForUser(link.owner_user_id);
+    const { getAuthedClientAndCalendar } = await import("../google/oauth");
+    const authed = await getAuthedClientAndCalendar(link.owner_user_id);
     if (authed) {
       const { google } = await import("googleapis");
-      const gcal = google.calendar({ version: "v3", auth: authed });
-      if (excludeOwn) {
-        // ID で自リンク分を除外する必要があるため events.list を使う
-        const list = await gcal.events.list({
-          calendarId: "primary",
-          timeMin: fromIso,
-          timeMax: toIso,
-          singleEvents: true,
-          maxResults: 2500,
-        });
-        for (const ev of list.data.items ?? []) {
-          if (!ev.id || ownGoogleIds.has(ev.id)) continue;
-          if (ev.status === "cancelled" || ev.transparency === "transparent") continue;
-          const s = ev.start?.dateTime ?? (ev.start?.date ? `${ev.start.date}T00:00:00+09:00` : null);
-          const e = ev.end?.dateTime ?? (ev.end?.date ? `${ev.end.date}T00:00:00+09:00` : null);
-          if (s && e) busy.push({ start: Date.parse(s), end: Date.parse(e) });
-        }
-      } else {
-        const fb = await gcal.freebusy.query({
-          requestBody: {
-            timeMin: fromIso,
-            timeMax: toIso,
-            items: [{ id: "primary" }],
-          },
-        });
-        const periods = fb.data.calendars?.primary?.busy ?? [];
-        for (const p of periods) {
-          if (p.start && p.end) {
-            busy.push({ start: Date.parse(p.start), end: Date.parse(p.end) });
-          }
-        }
+      const gcal = google.calendar({ version: "v3", auth: authed.client });
+      // 連携先カレンダー（既定 primary）の予定を events.list で取得。
+      // ID で自リンク分を除外できる／別カレンダーでも calendar.events スコープで確実に読める。
+      const list = await gcal.events.list({
+        calendarId: authed.calendarId,
+        timeMin: fromIso,
+        timeMax: toIso,
+        singleEvents: true,
+        maxResults: 2500,
+      });
+      for (const ev of list.data.items ?? []) {
+        if (excludeOwn && ev.id && ownGoogleIds.has(ev.id)) continue;
+        if (ev.status === "cancelled" || ev.transparency === "transparent") continue;
+        const s = ev.start?.dateTime ?? (ev.start?.date ? `${ev.start.date}T00:00:00+09:00` : null);
+        const e = ev.end?.dateTime ?? (ev.end?.date ? `${ev.end.date}T00:00:00+09:00` : null);
+        if (s && e) busy.push({ start: Date.parse(s), end: Date.parse(e) });
       }
     }
   } catch (e) {
-    console.error("booking freebusy failed (app-events only):", (e as Error).message);
+    console.error("booking google busy failed (app-events only):", (e as Error).message);
   }
 
   return busy;
