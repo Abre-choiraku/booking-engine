@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { anonClient, resolveCalendar, resolveHooks, getEngineConfig } from "../config";
 import { notifyReservationConfirmed } from "../notify";
+import { recordNotifyFailure } from "../repo/reservations";
 import { getOwnerCalendarTarget, DEFAULT_CALENDAR_ID } from "../google/calendar";
 import { createZoomMeetingForUser } from "../zoom";
 import { isSlotAvailable, fetchWindows, slotCapacity } from "../core/availability";
@@ -478,7 +479,10 @@ export function createReserveHandler() {
     // メール通知（Vercel は応答後の処理を打ち切るため必ず await）
     const baseUrl = getEngineConfig().publicBaseUrl ?? request.nextUrl.origin;
     const cancelUrl = `${baseUrl}/cancel/${cancelToken}`;
-    await notifyReservationConfirmed({
+    // ★通知が届かなかったら予約に理由を残す（2026-09-04）。
+    //   予約そのものは成立させる（お客様の予約を通知の都合で失敗にはしない）が、
+    //   「送ったつもりで届いていない」を黙って消さない。
+    const notify = await notifyReservationConfirmed({
       link,
       guestName: guest.name,
       guestEmail: guest.email || null,
@@ -488,6 +492,9 @@ export function createReserveHandler() {
       cancelUrl,
       lineFriendId: lineUserId,
     });
+    if (!notify.ok) {
+      await recordNotifyFailure(reservation.id, "受付完了", notify.error ?? "理由不明");
+    }
 
     return NextResponse.json({
       ok: true,
@@ -496,6 +503,7 @@ export function createReserveHandler() {
       google_synced: !!googleEventId,
       meet_url: meetUrl,
       cancel_url: cancelUrl,
+      notified: notify.ok,
     });
   };
 }

@@ -51,8 +51,29 @@ async function postEvent(
     }),
   });
   if (!res.ok) {
-    throw new Error(`VAILS webhook ${event} failed: HTTP ${res.status}`);
+    // ★VAILS は「なぜ送れなかったか」を本文の error に日本語で返してくる（2026-09-04）。
+    //   HTTP番号だけだと予約システム側の運用者には何のことか分からないので、
+    //   理由をそのまま持ち帰って記録・画面表示に使う。
+    throw new Error(`${await readReason(res)}（VAILS ${event} HTTP ${res.status}）`);
   }
+}
+
+/** VAILS が返したエラー本文から、人が読める理由を取り出す（読めなければ既定文） */
+async function readReason(res: Response): Promise<string> {
+  try {
+    const text = await res.text();
+    if (text) {
+      try {
+        const j = JSON.parse(text) as { error?: string };
+        if (j?.error) return String(j.error).slice(0, 300);
+      } catch {
+        return text.slice(0, 300);
+      }
+    }
+  } catch {
+    // 本文が読めなくても既定文で続ける
+  }
+  return "LINEへの通知が受け付けられませんでした";
 }
 
 export function createVailsNotifyAdapter(opts: VailsNotifyOptions): NotifyAdapter {

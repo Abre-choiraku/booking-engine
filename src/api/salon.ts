@@ -10,6 +10,7 @@ import { getOwnerCalendarTarget, DEFAULT_CALENDAR_ID } from "../google/calendar"
 import { getStaffCalendarTarget } from "../google/staff-calendar";
 import { createZoomMeetingForUser } from "../zoom";
 import { notifyReservationConfirmed } from "../notify";
+import { recordNotifyFailure } from "../repo/reservations";
 import { getEngineConfig } from "../config";
 import type { BookingLinkRow } from "../types";
 
@@ -511,7 +512,8 @@ export function createSalonReserveHandler() {
     // メール通知
     const baseUrl = getEngineConfig().publicBaseUrl ?? request.nextUrl.origin;
     const cancelUrl = `${baseUrl}/cancel/${cancelToken}`;
-    await notifyReservationConfirmed({
+    // ★届かなかったら予約に理由を残す（2026-09-04）
+    const notify = await notifyReservationConfirmed({
       // ★選択オプションも通知タイトルに含める（2026-08-30 CEO点検指摘:
       //   「カット＋トリートメント」のように選んだ内容が確定通知に出ないと当日に食い違う）
       link: { ...link, title: `${link.title}｜${menu.name}${options.length > 0 ? `（＋${options.map((o) => o.name).join("・")}）` : ""}` },
@@ -524,6 +526,9 @@ export function createSalonReserveHandler() {
       cancelUrl,
       lineFriendId: lineUserId,
     });
+    if (!notify.ok) {
+      await recordNotifyFailure(reservation.id, "受付完了", notify.error ?? "理由不明");
+    }
 
     return NextResponse.json({
       ok: true,
@@ -531,6 +536,7 @@ export function createSalonReserveHandler() {
       end_at: endIso,
       meet_url: meetUrl,
       cancel_url: cancelUrl,
+      notified: notify.ok,
     });
   };
 }
