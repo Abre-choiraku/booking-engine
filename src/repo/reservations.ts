@@ -1,5 +1,5 @@
 import { anonClient, getEngineConfig } from "../config";
-import { getOwnerCalendarTarget, DEFAULT_CALENDAR_ID } from "../google/calendar";
+import { deleteStaffEvent } from "../google/staff-calendar";
 import { deleteZoomMeetingForUser } from "../zoom";
 import { notifyReservationCancelled, notifyReservationReminder } from "../notify";
 import type { BookingLinkRow, ReminderConfig } from "../types";
@@ -143,15 +143,8 @@ export async function cancelReservationByOwner(
   // Google 予定 / Zoom を削除（サロンはスタッフの暦、それ以外は主催者の暦）
   try {
     if (r.google_event_id) {
-      const calOwner = r.staff_id ?? ownerId;
-      const gtarget = await getOwnerCalendarTarget(calOwner);
-      const gcal = gtarget?.gcal ?? null;
-      const calId = gtarget?.calendarId ?? DEFAULT_CALENDAR_ID;
-      if (gcal) {
-        await gcal.events
-          .delete({ calendarId: calId, eventId: r.google_event_id })
-          .catch(() => {});
-      }
+      // サロン型は担当スタッフの暦、それ以外は主催者の暦（未連携スタッフは主催者へ）
+      await deleteStaffEvent(r.staff_id, ownerId, r.google_event_id);
     }
     if (r.zoom_meeting_id) await deleteZoomMeetingForUser(ownerId, r.zoom_meeting_id);
   } catch (e) {

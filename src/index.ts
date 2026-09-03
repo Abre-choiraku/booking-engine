@@ -82,6 +82,21 @@ export {
   verifyCalendarAccess,
 } from "./google/calendar";
 export type { CalendarAccessError } from "./google/calendar";
+// スタッフごとの Google カレンダー連携
+export {
+  getStaffCalendarTarget,
+  getStaffTokenUserId,
+  deleteStaffEvent,
+  listStaffGoogleStatuses,
+  getStaffGoogleStatus,
+  linkStaffGoogleAccount,
+  disconnectStaffGoogle,
+} from "./google/staff-calendar";
+export type {
+  StaffCalendarTarget,
+  StaffGoogleState,
+  StaffGoogleStatus,
+} from "./google/staff-calendar";
 
 // Zoom 連携（per-owner OAuth ＋ 旧 S2S）
 export {

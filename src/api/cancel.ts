@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { anonClient, resolveCalendar, resolveHooks } from "../config";
 import { notifyReservationCancelled } from "../notify";
 import { getOwnerCalendarTarget, DEFAULT_CALENDAR_ID } from "../google/calendar";
+import { deleteStaffEvent } from "../google/staff-calendar";
 import { deleteZoomMeetingForUser } from "../zoom";
 import { slotCapacity } from "../core/availability";
 import type { BookingLinkRow } from "../types";
@@ -33,6 +34,7 @@ type ReservationRow = {
   google_event_id: string | null;
   zoom_meeting_id: string | null;
   meet_url: string | null;
+  staff_id: string | null;
   link: BookingLinkRow;
 };
 
@@ -41,7 +43,7 @@ async function loadByToken(ctoken: string): Promise<ReservationRow | null> {
   const { data } = await supabase
     .from("booking_reservations")
     .select(
-      "id, link_id, start_at, end_at, guest_name, guest_email, line_user_id, status, event_id, google_event_id, zoom_meeting_id, meet_url, link:booking_links(*)",
+      "id, link_id, start_at, end_at, guest_name, guest_email, line_user_id, status, event_id, google_event_id, zoom_meeting_id, meet_url, staff_id, link:booking_links(*)",
     )
     .eq("cancel_token", ctoken)
     .maybeSingle();
@@ -190,14 +192,9 @@ export function createCancelHandler() {
       // ==== 1対1: Google 予定 + Zoom + ミラー予定を削除 ====
       try {
         if (r.google_event_id) {
-          const gtarget = await getOwnerCalendarTarget(r.link.owner_user_id);
-          const gcal = gtarget?.gcal ?? null;
-          const calId = gtarget?.calendarId ?? DEFAULT_CALENDAR_ID;
-          if (gcal) {
-            await gcal.events
-              .delete({ calendarId: calId, eventId: r.google_event_id })
-              .catch(() => {});
-          }
+          // サロン型は担当スタッフのカレンダーに入っている（未連携ならオーナー）。
+          // 消す先を間違えると予定が残り、その枠が永久に埋まったままになる。
+          await deleteStaffEvent(r.staff_id, r.link.owner_user_id, r.google_event_id);
         }
         if (r.zoom_meeting_id) {
           await deleteZoomMeetingForUser(r.link.owner_user_id, r.zoom_meeting_id);

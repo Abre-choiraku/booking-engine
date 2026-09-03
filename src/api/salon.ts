@@ -7,6 +7,7 @@ import {
   isSalonSlotAvailable,
 } from "../core/availability";
 import { getOwnerCalendarTarget, DEFAULT_CALENDAR_ID } from "../google/calendar";
+import { getStaffCalendarTarget } from "../google/staff-calendar";
 import { createZoomMeetingForUser } from "../zoom";
 import { notifyReservationConfirmed } from "../notify";
 import { getEngineConfig } from "../config";
@@ -441,7 +442,8 @@ export function createSalonReserveHandler() {
       }
     }
 
-    const gtarget = await getOwnerCalendarTarget(staffId); // スタッフ本人の Google
+    // スタッフ本人の Google（未連携ならオーナーのカレンダーへ）
+    const gtarget = await getStaffCalendarTarget(staffId, link.owner_user_id);
     const gcal = gtarget?.gcal ?? null;
     const calId = gtarget?.calendarId ?? DEFAULT_CALENDAR_ID;
     if (gcal) {
@@ -612,7 +614,7 @@ export async function createSalonAdminReservation(
 
   // スタッフの Google カレンダーへ（連携時のみ・任意）
   try {
-    const gtarget = await getOwnerCalendarTarget(staffId);
+    const gtarget = await getStaffCalendarTarget(staffId, link.owner_user_id);
     const gcal = gtarget?.gcal ?? null;
     const calId = gtarget?.calendarId ?? DEFAULT_CALENDAR_ID;
     if (gcal) {
