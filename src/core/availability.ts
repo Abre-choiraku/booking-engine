@@ -213,16 +213,29 @@ export async function collectBusy(
     for (const r of rs ?? []) {
       busy.push(reservationBusy(r.start_at, r.end_at));
     }
-    // スタッフ本人の Google 予定
+    // スタッフ本人の Google 予定（未連携ならオーナーのカレンダーを見る＝予定の入る先と必ず同じ）
     try {
-      const { getAuthedClientAndCalendar } = await import("../google/oauth");
-      const authed = await getAuthedClientAndCalendar(staffId);
-      if (authed) {
-        const { google } = await import("googleapis");
-        const gcal = google.calendar({ version: "v3", auth: authed.client });
+      const { getStaffCalendarTarget } = await import("../google/staff-calendar");
+      const target = await getStaffCalendarTarget(staffId, link.owner_user_id);
+      if (target) {
+        // この予約システムが作った予定は除外する。
+        // 予約ぶんの塞ぎは上の booking_reservations で済んでおり、
+        // オーナーのカレンダーを共有している場合に
+        // 「別スタッフの予約」まで塞いでしまうのを防ぐ。
+        const ourEventIds = new Set<string>();
+        const { data: ourEvents } = await supabase
+          .from("booking_reservations")
+          .select("google_event_id, link:booking_links!inner(owner_user_id)")
+          .eq("link.owner_user_id", link.owner_user_id)
+          .not("google_event_id", "is", null)
+          .lt("start_at", toIso)
+          .gt("end_at", fromIso);
+        for (const row of (ourEvents ?? []) as { google_event_id: string | null }[]) {
+          if (row.google_event_id) ourEventIds.add(row.google_event_id);
+        }
         // events.list を使う（連携先が別カレンダーでも calendar.events スコープで確実に読める）
-        const list = await gcal.events.list({
-          calendarId: authed.calendarId,
+        const list = await target.gcal.events.list({
+          calendarId: target.calendarId,
           timeMin: fromIso,
           timeMax: toIso,
           singleEvents: true,
@@ -230,6 +243,7 @@ export async function collectBusy(
         });
         for (const ev of list.data.items ?? []) {
           if (ev.status === "cancelled" || ev.transparency === "transparent") continue;
+          if (ev.id && ourEventIds.has(ev.id)) continue;
           const s = ev.start?.dateTime ?? (ev.start?.date ? `${ev.start.date}T00:00:00+09:00` : null);
           const e = ev.end?.dateTime ?? (ev.end?.date ? `${ev.end.date}T00:00:00+09:00` : null);
           if (s && e) busy.push({ start: Date.parse(s), end: Date.parse(e) });

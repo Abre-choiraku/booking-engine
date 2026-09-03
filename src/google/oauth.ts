@@ -85,7 +85,30 @@ export async function exchangeAndSave(
     },
     { onConflict: "user_id" },
   );
+  // つなぎ直したので「切れている」記録を消す
+  await markTokenHealth(userId, null);
   return { email };
+}
+
+// 連携の状態（切れた／復旧した）を記録する。
+// 列が無い環境（マイグレーション未実行）でも動くよう、失敗は握りつぶす。
+export async function markTokenHealth(
+  userId: string,
+  error: string | null,
+): Promise<void> {
+  try {
+    const supabase = anonClient();
+    await supabase
+      .from("google_auth_tokens")
+      .update(
+        error
+          ? { last_error: error.slice(0, 500), last_error_at: new Date().toISOString() }
+          : { last_error: null, last_error_at: null, last_success_at: new Date().toISOString() },
+      )
+      .eq("user_id", userId);
+  } catch {
+    // 記録できなくても本来の処理は続ける
+  }
 }
 
 // 有効な OAuth2Client ＋ 連携先カレンダーIDを取得（必要なら refresh）
@@ -133,8 +156,15 @@ export async function getAuthedClientAndCalendar(userId: string): Promise<{
           updated_at: new Date().toISOString(),
         })
         .eq("user_id", userId);
+      // 前回失敗していたら「復旧した」を記録（管理画面の赤表示を消す）
+      if ((data as { last_error_at?: string | null }).last_error_at) {
+        await markTokenHealth(userId, null);
+      }
     } catch (e) {
       console.error("トークン refresh 失敗:", e);
+      // 連携が切れた（アクセス取り消し・パスワード変更など）。
+      // 管理画面で「つながりが切れています」と出すために記録する。
+      await markTokenHealth(userId, (e as Error).message ?? "refresh failed");
       return null;
     }
   }
@@ -186,18 +216,38 @@ export async function disconnectUser(userId: string): Promise<void> {
 // 現在の接続状態
 export async function getConnectionStatus(userId: string): Promise<{
   connected: boolean;
+  /** true = つながっていたが切れた（つなぎ直しが必要） */
+  broken: boolean;
   email: string | null;
   calendarId: string;
 }> {
   const supabase = anonClient();
-  const { data } = await supabase
+  type Row = {
+    google_email: string | null;
+    calendar_id: string | null;
+    last_error_at?: string | null;
+  };
+  let row: Row | null = null;
+  const { data, error } = await supabase
     .from("google_auth_tokens")
-    .select("google_email, calendar_id")
+    .select("google_email, calendar_id, last_error_at")
     .eq("user_id", userId)
     .maybeSingle();
+  if (error) {
+    // last_error_at 列が無い環境（マイグレーション未実行）向け
+    const { data: legacy } = await supabase
+      .from("google_auth_tokens")
+      .select("google_email, calendar_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+    row = (legacy as Row | null) ?? null;
+  } else {
+    row = (data as Row | null) ?? null;
+  }
   return {
-    connected: !!data,
-    email: (data?.google_email as string | null) ?? null,
-    calendarId: normalizeCalendarId((data?.calendar_id as string | null) ?? null),
+    connected: !!row,
+    broken: !!row?.last_error_at,
+    email: row?.google_email ?? null,
+    calendarId: normalizeCalendarId(row?.calendar_id ?? null),
   };
 }
