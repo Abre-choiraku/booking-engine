@@ -28,6 +28,14 @@ export type OwnerReservation = {
   cancel_token: string | null;
   created_at: string;
   line_user_id?: string | null;
+  /**
+   * ★通知（LINE / メール）が届かなかったときの理由（2026-09-04）。
+   *   null = 問題なし。予約一覧に「お知らせが届いていません」と出すためのもの。
+   *   以前は通知の失敗が console.error だけで消えており、
+   *   VAILS が「回線が決まらないので送りませんでした」と 502 を返しても
+   *   予約システム側からは完全な成功に見えていた。
+   */
+  notify_error?: string | null;
   // 付加情報
   link_title: string;
   link_type: "calendar" | "event" | "salon";
@@ -41,6 +49,51 @@ type Row = Omit<OwnerReservation, "link_title" | "link_type" | "menu_name" | "st
   link: { owner_user_id: string; title: string; link_type: OwnerReservation["link_type"] };
 };
 
+// ============================================================
+// 通知が届かなかったことを予約に記録する（2026-09-04）
+// ============================================================
+// VAILS 側の S3「失敗が黙って消えない」と同じ考え方を予約システム側にも通す。
+//   ・通知の失敗で予約そのものは巻き戻さない（予約は成立している）
+//   ・ただし **黙って消さない**。予約の行に理由を残し、予約一覧に出す
+// 新しい台帳は作らない。既に全画面が読んでいる booking_reservations に
+// nullable の列を1つ足すだけ（migration 2026-09-04-0023）。
+// ============================================================
+
+/** 通知の種類（記録に残す日本語） */
+export type NotifyKind = "受付完了" | "キャンセル" | "リマインド";
+
+/** 記録用に「YYYY-MM-DD HH:MM」(JST) を作る */
+function jstStamp(nowMs: number = Date.now()): string {
+  const d = new Date(nowMs + 9 * 60 * 60 * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+}
+
+/** 予約1件に残す通知失敗のメッセージ（画面にそのまま出す） */
+export function notifyFailureMessage(kind: NotifyKind, reason: string, nowMs?: number): string {
+  return `${jstStamp(nowMs)} ${kind}のお知らせが届きませんでした: ${reason}`.slice(0, 500);
+}
+
+/**
+ * 通知が届かなかったことを予約に記録する。
+ * ここ自体が失敗しても予約・通知の流れは止めない（記録が原因で予約が壊れるのは本末転倒）。
+ */
+export async function recordNotifyFailure(
+  reservationId: string,
+  kind: NotifyKind,
+  reason: string,
+): Promise<void> {
+  try {
+    const supabase = anonClient();
+    await supabase
+      .from("booking_reservations")
+      .update({ notify_error: notifyFailureMessage(kind, reason) })
+      .eq("id", reservationId);
+  } catch (e) {
+    console.error("recordNotifyFailure failed:", (e as Error).message);
+  }
+}
+
 // 主催者の予約を横断取得（既定=確定のみ・start_at 昇順）
 export async function listOwnerReservations(
   ownerId: string,
@@ -50,7 +103,7 @@ export async function listOwnerReservations(
   let q = supabase
     .from("booking_reservations")
     .select(
-      "id, link_id, start_at, end_at, guest_name, guest_email, guest_phone, guest_note, custom_answers, status, staff_id, menu_id, total_price, meet_url, cancel_token, created_at, line_user_id, link:booking_links!inner(owner_user_id, title, link_type)",
+      "id, link_id, start_at, end_at, guest_name, guest_email, guest_phone, guest_note, custom_answers, status, staff_id, menu_id, total_price, meet_url, cancel_token, created_at, line_user_id, notify_error, link:booking_links!inner(owner_user_id, title, link_type)",
     )
     .eq("link.owner_user_id", ownerId);
   if (!opts?.includeCancelled) q = q.eq("status", "confirmed");
@@ -94,6 +147,7 @@ export async function listOwnerReservations(
     cancel_token: r.cancel_token,
     created_at: r.created_at,
     line_user_id: (r as { line_user_id?: string | null }).line_user_id ?? null,
+    notify_error: (r as { notify_error?: string | null }).notify_error ?? null,
     link_title: r.link?.title ?? "",
     link_type: r.link?.link_type ?? "calendar",
     menu_name: r.menu_id ? menuMap.get(r.menu_id) ?? null : null,
@@ -151,20 +205,19 @@ export async function cancelReservationByOwner(
     console.error("owner cancel google/zoom failed:", (e as Error).message);
   }
 
-  // ゲストへキャンセル通知
-  try {
-    await notifyReservationCancelled({
-      link: r.link,
-      guestName: r.guest_name,
-      guestEmail: r.guest_email,
-      startIso: r.start_at,
-      endIso: r.end_at,
-      meetUrl: r.meet_url,
-      cancelUrl: null,
-      lineFriendId: (r as { line_user_id?: string | null }).line_user_id ?? null,
-    });
-  } catch (e) {
-    console.error("owner cancel notify failed:", (e as Error).message);
+  // ゲストへキャンセル通知（★届かなかったら予約に理由を残す。黙って消さない）
+  const cancelNotify = await notifyReservationCancelled({
+    link: r.link,
+    guestName: r.guest_name,
+    guestEmail: r.guest_email,
+    startIso: r.start_at,
+    endIso: r.end_at,
+    meetUrl: r.meet_url,
+    cancelUrl: null,
+    lineFriendId: (r as { line_user_id?: string | null }).line_user_id ?? null,
+  });
+  if (!cancelNotify.ok) {
+    await recordNotifyFailure(reservationId, "キャンセル", cancelNotify.error ?? "理由不明");
   }
 
   return { ok: true };
@@ -197,96 +250,153 @@ function reminderFireTime(c: ReminderConfig, startMs: number): number | null {
   );
 }
 
+type ReminderRow = {
+  id: string;
+  start_at: string;
+  end_at: string;
+  guest_name: string;
+  guest_email: string | null;
+  line_user_id: string | null;
+  meet_url: string | null;
+  cancel_token: string | null;
+  created_at: string | null;
+  link: BookingLinkRow & {
+    reminder_hours: number | null;
+    reminders: ReminderConfig[] | null;
+    reminder_message?: string | null;
+  };
+};
+
+// そのリンクで実際に使うリマインド設定。
+// 新 reminders 優先。無ければ旧 reminder_hours を1件の「◯時間前」に変換。
+function remindersOf(link: ReminderRow["link"] | null | undefined): ReminderConfig[] {
+  if (link?.reminders && link.reminders.length > 0) return link.reminders;
+  if (link?.reminder_hours && link.reminder_hours > 0) {
+    return [{ kind: "before", hours: link.reminder_hours }];
+  }
+  return [];
+}
+
 // リマインド送信対象を探してメール送信する。Cron から定期実行。
 // リンクの reminders（複数・「◯時間前」/「◯日前のHH:MM」）に対応。
 // 旧 reminder_hours（単発）は後方互換で1件の「◯時間前」として扱う。
 // 二重送信防止は booking_reminder_sends（reservation_id, reminder_key）で原子的に claim。
-export async function sendDueReminders(): Promise<{ sent: number; checked: number }> {
+export async function sendDueReminders(): Promise<{ sent: number; checked: number; failed: number }> {
   const supabase = anonClient();
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
   // 先読み範囲は 60 日先まで（現実的な設定を十分カバー）
   const horizonIso = new Date(nowMs + 60 * 24 * 60 * 60 * 1000).toISOString();
-  const { data } = await supabase
-    .from("booking_reservations")
-    .select(
-      "id, start_at, end_at, guest_name, guest_email, line_user_id, meet_url, cancel_token, created_at, status, link:booking_links!inner(title, location, description, cancel_deadline_hours, owner_user_id, reminder_hours, reminders, reminder_message)",
-    )
-    .eq("status", "confirmed")
-    .gt("start_at", nowIso)
-    .lt("start_at", horizonIso)
-    .limit(1000);
-  const rows = (data ?? []) as unknown as {
-    id: string;
-    start_at: string;
-    end_at: string;
-    guest_name: string;
-    guest_email: string | null;
-    line_user_id: string | null;
-    meet_url: string | null;
-    cancel_token: string | null;
-    created_at: string | null;
-    link: BookingLinkRow & {
-      reminder_hours: number | null;
-      reminders: ReminderConfig[] | null;
-    };
-  }[];
+
+  // ★100アカウント耐性（2026-09-02）:
+  //   以前は `.limit(1000)` で1回だけ取っていた。全オーナー横断の走査なので、
+  //   100アカウント×各100予約＝1万件になると **9千件が黙って捨てられ**、
+  //   その予約のリマインドは永久に飛ばない（エラーも出ない）。
+  //   取りこぼしを作らないよう start_at 順にページ送りで全部読む。
+  const PAGE = 1000;
+  const HARD_CAP = 50_000; // 異常時の暴走止め（1回の cron で読む上限）
+  const rows: ReminderRow[] = [];
+  for (let from = 0; from < HARD_CAP; from += PAGE) {
+    const { data, error } = await supabase
+      .from("booking_reservations")
+      .select(
+        "id, start_at, end_at, guest_name, guest_email, line_user_id, meet_url, cancel_token, created_at, status, link:booking_links!inner(title, location, description, cancel_deadline_hours, owner_user_id, partner_client_id, reminder_hours, reminders, reminder_message)",
+      )
+      .eq("status", "confirmed")
+      .gt("start_at", nowIso)
+      .lt("start_at", horizonIso)
+      .order("start_at", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    const page = (data ?? []) as unknown as ReminderRow[];
+    rows.push(...page);
+    if (page.length < PAGE) break;
+  }
 
   const baseUrl = getEngineConfig().publicBaseUrl ?? "";
-  let sent = 0;
   let checked = 0;
+
+  // ★1件ずつ claim していたのをやめ、まず「送るべきもの」を全部そろえる（2026-09-02）。
+  //   以前は (予約 × リマインド設定) ごとに upsert を1往復していた。
+  //   1万予約×3設定＝3万往復で、cron の実行時間に収まらない。
+  //   先に候補を作り、claim をまとめて投げる。
+  const due: Array<{ row: ReminderRow; key: string; message: string | null }> = [];
   for (const r of rows) {
-    // 新 reminders 優先。無ければ旧 reminder_hours を1件の「◯時間前」に変換。
-    const configs: ReminderConfig[] =
-      r.link?.reminders && r.link.reminders.length > 0
-        ? r.link.reminders
-        : r.link?.reminder_hours && r.link.reminder_hours > 0
-          ? [{ kind: "before", hours: r.link.reminder_hours }]
-          : [];
+    const configs = remindersOf(r.link);
     if (configs.length === 0) continue;
     checked++;
 
     const startMs = Date.parse(r.start_at);
     const createdMs = r.created_at ? Date.parse(r.created_at) : 0;
+    if (!r.guest_email && !r.line_user_id) continue; // メールもLINEも無ければ送れない
 
     for (const c of configs) {
       const fireMs = reminderFireTime(c, startMs);
       if (fireMs === null) continue;
       if (nowMs < fireMs) continue; // まだ送信時刻に達していない
       if (createdMs && fireMs < createdMs) continue; // 予約時点で既に過ぎていた設定は送らない
-
-      // 分単位のキーで原子的に claim（重複送信防止）
-      const key = new Date(fireMs).toISOString().slice(0, 16);
-      const { data: claimed } = await supabase
-        .from("booking_reminder_sends")
-        .upsert([{ reservation_id: r.id, reminder_key: key }], {
-          onConflict: "reservation_id,reminder_key",
-          ignoreDuplicates: true,
-        })
-        .select("reservation_id");
-      if (!claimed || claimed.length === 0) continue; // 既に送信済み
-
-      if (!r.guest_email && !r.line_user_id) continue; // メールもLINEも無ければ送れない
-      // このリマインド固有の案内文→無ければリンク共通の案内文
-      const resolvedMsg =
-        c.message?.trim() || r.link?.reminder_message?.trim() || null;
-      try {
-        await notifyReservationReminder({
-          link: r.link,
-          guestName: r.guest_name,
-          guestEmail: r.guest_email,
-          startIso: r.start_at,
-          endIso: r.end_at,
-          meetUrl: r.meet_url,
-          cancelUrl: r.cancel_token ? `${baseUrl}/cancel/${r.cancel_token}` : null,
-          reminderMessage: resolvedMsg,
-          lineFriendId: r.line_user_id,
-        });
-        sent++;
-      } catch (e) {
-        console.error("reminder send failed:", (e as Error).message);
-      }
+      due.push({
+        row: r,
+        // 分単位のキーで原子的に claim（重複送信防止）
+        key: new Date(fireMs).toISOString().slice(0, 16),
+        // このリマインド固有の案内文→無ければリンク共通の案内文
+        message: c.message?.trim() || r.link?.reminder_message?.trim() || null,
+      });
     }
   }
-  return { sent, checked };
+  if (due.length === 0) return { sent: 0, checked, failed: 0 };
+
+  // まとめて claim。返ってきた分＝自分が取れた分だけ送る（他プロセスと競っても二重送信しない）
+  const claimed = new Set<string>();
+  const CLAIM_CHUNK = 500;
+  for (let i = 0; i < due.length; i += CLAIM_CHUNK) {
+    const chunk = due.slice(i, i + CLAIM_CHUNK);
+    const { data } = await supabase
+      .from("booking_reminder_sends")
+      .upsert(
+        chunk.map((d) => ({ reservation_id: d.row.id, reminder_key: d.key })),
+        { onConflict: "reservation_id,reminder_key", ignoreDuplicates: true },
+      )
+      .select("reservation_id, reminder_key");
+    for (const c of (data ?? []) as Array<{ reservation_id: string; reminder_key: string }>) {
+      claimed.add(`${c.reservation_id}|${c.reminder_key}`);
+    }
+  }
+
+  let sent = 0;
+  let failed = 0;
+  for (const d of due) {
+    if (!claimed.has(`${d.row.id}|${d.key}`)) continue; // 既に送信済み
+    const r = d.row;
+    // ★2026-09-04: 以前はここが try/catch だったが、notifyReservationReminder は
+    //   内部で例外を握りつぶす void 関数だったため、**catch は一度も動かなかった**。
+    //   つまり「失敗したら claim を戻して再試行する」という安全網が死んでいた。
+    //   結果を戻り値で受け取る形に変え、安全網を実際に動かす。
+    const outcome = await notifyReservationReminder({
+      link: r.link,
+      guestName: r.guest_name,
+      guestEmail: r.guest_email,
+      startIso: r.start_at,
+      endIso: r.end_at,
+      meetUrl: r.meet_url,
+      cancelUrl: r.cancel_token ? `${baseUrl}/cancel/${r.cancel_token}` : null,
+      reminderMessage: d.message,
+      lineFriendId: r.line_user_id,
+    });
+    if (outcome.ok) {
+      sent++;
+      continue;
+    }
+    failed++;
+    // 届かなかったことを予約に残す（主催者の予約一覧に出る）
+    await recordNotifyFailure(r.id, "リマインド", outcome.error ?? "理由不明");
+    // 送れなかった分は claim を戻す（次の cron で必ずもう一度試す）。
+    // 戻さないと「1回失敗＝永久に届かない」になる
+    await supabase
+      .from("booking_reminder_sends")
+      .delete()
+      .eq("reservation_id", r.id)
+      .eq("reminder_key", d.key);
+  }
+  return { sent, checked, failed };
 }

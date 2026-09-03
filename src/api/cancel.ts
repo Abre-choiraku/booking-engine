@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { anonClient, resolveCalendar, resolveHooks } from "../config";
 import { notifyReservationCancelled } from "../notify";
+import { recordNotifyFailure } from "../repo/reservations";
 import { getOwnerCalendarTarget, DEFAULT_CALENDAR_ID } from "../google/calendar";
 import { deleteStaffEvent } from "../google/staff-calendar";
 import { deleteZoomMeetingForUser } from "../zoom";
@@ -219,7 +220,8 @@ export function createCancelHandler() {
     }
 
     // メール通知（Vercel は応答後の処理を打ち切るため await 必須）
-    await notifyReservationCancelled({
+    // ★届かなかったら予約に理由を残す（2026-09-04）。キャンセルは成立させたまま。
+    const notify = await notifyReservationCancelled({
       link: r.link,
       guestName: r.guest_name,
       guestEmail: r.guest_email,
@@ -229,7 +231,10 @@ export function createCancelHandler() {
       cancelUrl: null,
       lineFriendId: r.line_user_id ?? null,
     });
+    if (!notify.ok) {
+      await recordNotifyFailure(r.id, "キャンセル", notify.error ?? "理由不明");
+    }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, notified: notify.ok });
   };
 }

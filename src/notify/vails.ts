@@ -30,6 +30,14 @@ async function postEvent(
     },
     body: JSON.stringify({
       event,
+      // ★どのアカウントの予約かを「イベント自身」に必ず載せる（2026-09-02）。
+      //   これが無いと VAILS 側は「その人が友だちになっているアカウント」から
+      //   送信元を推測するしかなく、同じ人が2アカウントの友だちになった瞬間に
+      //   別のお店の回線から通知が出る。100アカウント運用では確実に起きる。
+      //   ・clientId      … 予約ページに焼き付けた VAILS のアカウントID（最優先）
+      //   ・ownerUserId   … 予約システム側の店舗ID（VAILS の clients と1:1）
+      clientId: payload.link?.partner_client_id ?? null,
+      ownerUserId: payload.link?.owner_user_id ?? null,
       lineUserId: payload.lineFriendId,
       linkTitle: payload.link?.title ?? "",
       baseTitle: payload.baseTitle ?? payload.link?.title ?? "",
@@ -43,8 +51,29 @@ async function postEvent(
     }),
   });
   if (!res.ok) {
-    throw new Error(`VAILS webhook ${event} failed: HTTP ${res.status}`);
+    // ★VAILS は「なぜ送れなかったか」を本文の error に日本語で返してくる（2026-09-04）。
+    //   HTTP番号だけだと予約システム側の運用者には何のことか分からないので、
+    //   理由をそのまま持ち帰って記録・画面表示に使う。
+    throw new Error(`${await readReason(res)}（VAILS ${event} HTTP ${res.status}）`);
   }
+}
+
+/** VAILS が返したエラー本文から、人が読める理由を取り出す（読めなければ既定文） */
+async function readReason(res: Response): Promise<string> {
+  try {
+    const text = await res.text();
+    if (text) {
+      try {
+        const j = JSON.parse(text) as { error?: string };
+        if (j?.error) return String(j.error).slice(0, 300);
+      } catch {
+        return text.slice(0, 300);
+      }
+    }
+  } catch {
+    // 本文が読めなくても既定文で続ける
+  }
+  return "LINEへの通知が受け付けられませんでした";
 }
 
 export function createVailsNotifyAdapter(opts: VailsNotifyOptions): NotifyAdapter {

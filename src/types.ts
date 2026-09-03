@@ -43,6 +43,11 @@ export type BookingLink = {
   // SHEALS ops の案件ひも付け（任意。単体/LINE では常に null）
   project_id: string | null;
   owner_user_id: string;
+  // ★この予約ページがどの VAILS アカウントのものか（2026-09-02）。
+  //   予約ページを作った時点で焼き付け、通知イベントにそのまま同梱する。
+  //   これが入っていれば VAILS は「誰の友だちか」を推測せずに送信元の回線を決められる。
+  //   null = 旧データ（VAILS 側は owner_user_id で解決する）
+  partner_client_id?: string | null;
   duration_min: number;
   // 枠の開始間隔（分）。null/0 = duration_min + buffer_min ごと（従来）
   slot_interval_min?: number | null;
