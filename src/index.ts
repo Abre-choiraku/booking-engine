@@ -124,6 +124,12 @@ export type { Staff, Menu } from "./types";
 export * as owners from "./repo/owners";
 export type { OwnerUser } from "./repo/owners";
 export * as reservations from "./repo/reservations";
+// リマインドの既定値・既定文（画面からは "@sheals/booking-engine/reminders" で読む）
+export {
+  DEFAULT_REMINDERS,
+  defaultReminderMessage,
+  resolveReminderMessage,
+} from "./core/reminders";
 // 改善要望（利用者フィードバック）
 export * as improvements from "./repo/improvements";
 export type {

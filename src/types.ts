@@ -97,11 +97,11 @@ export type BookingLink = {
   reminder_hours?: number | null;
   // リマインドメール（新・複数）: 各設定でメールを送る。空配列=送らない
   reminders?: ReminderConfig[] | null;
-  // リマインドメールに差し込む任意の案内文（空=自動テンプレのみ）
+  // リマインドに差し込む任意の案内文（空=タイミングに合った既定文。core/reminders.ts）
   reminder_message?: string | null;
   // 予約ページ上部に表示するヘッダー画像（イベント予約の見栄え用・任意）
   header_image_url?: string | null;
-  // 開催場所の Google マップ リンク（任意。未設定なら location 文字列から自動検索）
+  // 開催場所の Google マップ リンク（任意。未設定なら予約ページに地図を出さない）
   map_url?: string | null;
   // リンク単位のブランド店名（VAILS連携: null = オーナーの tenant_brands を使う）
   brand_display_name?: string | null;
