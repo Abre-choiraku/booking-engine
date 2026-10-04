@@ -1,4 +1,5 @@
 import { serviceClient } from "../config";
+import { meetingUrlMissing } from "../core/meeting";
 import type { NotifyAdapter, NotifyPayload } from "../config";
 import { getBrand } from "../repo/brands";
 
@@ -109,6 +110,9 @@ export function createEmailNotifyAdapter(opts: EmailNotifyOptions = {}): NotifyA
     async reservationConfirmed(input: NotifyPayload) {
       const when = jstRange(input.startIso, input.endIso);
       const from = await resolveFrom(input.link.owner_user_id, opts.from);
+      // Web会議の予約なのにURLを発行できなかった（連携切れ・未連携・発行失敗）。
+      // 予約は成立させているので、黙らずに双方へ知らせる。
+      const noMeetUrl = meetingUrlMissing(input.link.meeting_type, input.meetUrl);
       // --- 予約者宛 ---
       if (input.guestEmail) {
         const lines: string[] = [];
@@ -119,6 +123,7 @@ export function createEmailNotifyAdapter(opts: EmailNotifyOptions = {}): NotifyA
         lines.push(`■ 日時: ${when}`);
         if (input.link.location) lines.push(`■ 場所: ${input.link.location}`);
         if (input.meetUrl) lines.push(`■ Web会議: ${input.meetUrl}`);
+        if (noMeetUrl) lines.push(`■ Web会議: 参加用のURLは、主催者より別途ご案内します。`);
         if (input.link.description) {
           lines.push("");
           lines.push(input.link.description);
@@ -147,6 +152,15 @@ export function createEmailNotifyAdapter(opts: EmailNotifyOptions = {}): NotifyA
             `■ 日時: ${when}`,
             input.guestEmail ? `■ メール: ${input.guestEmail}` : null,
             input.meetUrl ? `■ Web会議: ${input.meetUrl}` : null,
+            noMeetUrl ? "" : null,
+            noMeetUrl
+              ? `⚠ Web会議の参加用URLを発行できませんでした。${
+                  input.link.meeting_type === "zoom" ? "Zoom" : "Google カレンダー"
+                } の連携が切れている可能性があります。`
+              : null,
+            noMeetUrl
+              ? `お客様には「参加用のURLは主催者より別途ご案内します」とお伝えしています。管理画面で連携をやり直し、参加用URLを直接お知らせください。`
+              : null,
             opts.ownerDashboardUrl ? "" : null,
             opts.ownerDashboardUrl ? `詳細: ${opts.ownerDashboardUrl}` : null,
           ]

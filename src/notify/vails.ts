@@ -1,4 +1,5 @@
 import type { NotifyAdapter, NotifyPayload } from "../config";
+import { meetingUrlMissing } from "../core/meeting";
 
 // ============================================================
 // VAILS（LINE運用管理）連携アダプタ — KICKOFF「lineモード」Phase 3 実装
@@ -42,10 +43,16 @@ async function postEvent(
       linkTitle: payload.link?.title ?? "",
       baseTitle: payload.baseTitle ?? payload.link?.title ?? "",
       location: payload.link?.location ?? null,
+      // 会場の Google マップ リンク（主催者が入力したときだけ）。
+      // VAILS 側はこれがあるときだけ地図リンクを出す（場所の文字から勝手に地図を作らない）
+      mapUrl: payload.link?.map_url ?? null,
       guestName: payload.guestName,
       startIso: payload.startIso,
       endIso: payload.endIso,
       meetUrl: payload.meetUrl,
+      // Web会議の予約なのに参加用URLを発行できなかった（連携切れなど）。
+      // VAILS 側は「URLは別途ご案内します」と出す（黙ってURL無しの文を送らない）
+      meetUrlMissing: meetingUrlMissing(payload.link?.meeting_type, payload.meetUrl),
       cancelUrl: payload.cancelUrl,
       reminderMessage: payload.reminderMessage ?? null,
     }),
@@ -80,7 +87,22 @@ export function createVailsNotifyAdapter(opts: VailsNotifyOptions): NotifyAdapte
   return {
     async reservationConfirmed(payload: NotifyPayload): Promise<void> {
       if (payload.lineFriendId) {
-        await postEvent(opts, "reservation.confirmed", payload);
+        try {
+          await postEvent(opts, "reservation.confirmed", payload);
+        } finally {
+          // ★参加用URLを発行できなかったときは、主催者にメールでも知らせる（2026-10-04）。
+          //   LINE経由の予約は主催者メールを送らない作りなので、ここで送らないと
+          //   主催者は予約一覧を見に行くまで気づけない。予約者宛は LINE の役目なので送らない。
+          //   LINE の通知が失敗したときも必ず送る（finally）。この知らせ自体の失敗は握る
+          //   ＝LINE 通知の成否（呼び出し元が記録する）を上書きしない。
+          if (meetingUrlMissing(payload.link?.meeting_type, payload.meetUrl)) {
+            try {
+              await opts.fallback?.reservationConfirmed({ ...payload, guestEmail: null });
+            } catch (e) {
+              console.error("meet url missing: owner alert failed:", (e as Error).message);
+            }
+          }
+        }
         return;
       }
       await opts.fallback?.reservationConfirmed(payload);

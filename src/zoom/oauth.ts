@@ -1,4 +1,5 @@
 import { encryptToken, decryptToken } from "../google/crypto";
+import { isDeadZoomGrant } from "./errors";
 import { anonClient } from "../config";
 
 // ============================================================
@@ -97,7 +98,21 @@ export async function exchangeAndSaveZoom(
   }
 
   const supabase = anonClient();
-  await supabase.from("zoom_auth_tokens").upsert(
+  // ★同じ Zoom アカウントを別の主催者アカウントが連携していたら、そちらを「切れた」印にする（2026-10-04）。
+  //   Zoom は「1アカウント×1アプリ」につき鍵を1組しか持たないので、いま連携した時点で
+  //   先に連携していた側の鍵は無効になっている。そのままにすると画面は「連携済み」のまま
+  //   URLだけ出なくなる（実際に起きた）。行は残して鍵だけ空にする＝その人の画面に
+  //   「連携が切れています」と出し続けられる。
+  //   自分の保存より先に行う: 2人がほぼ同時に同じ Zoom を連携したとき、保存のあとに印を付けると
+  //   互いの新しい鍵に印を付け合って両方切れる。先に付ければ、あとから保存した側が必ず残る。
+  if (email) {
+    await supabase
+      .from("zoom_auth_tokens")
+      .update({ ...DEAD_TOKENS, updated_at: new Date().toISOString() })
+      .eq("zoom_email", email)
+      .neq("user_id", userId);
+  }
+  const { error: saveErr } = await supabase.from("zoom_auth_tokens").upsert(
     {
       user_id: userId,
       zoom_email: email,
@@ -113,8 +128,13 @@ export async function exchangeAndSaveZoom(
     },
     { onConflict: "user_id" },
   );
+  if (saveErr) throw new Error(`Zoom 連携の保存に失敗: ${saveErr.message}`);
   return { email };
 }
+
+// 「連携が切れた」印。行は残し、鍵だけ空にする（zoom_email を残して画面に出せるように）。
+// 消さないのは、同時に走った別の更新があとから新しい鍵を保存したときに、それを受け止める行が要るため。
+const DEAD_TOKENS = { access_token_encrypted: null, refresh_token_encrypted: null } as const;
 
 // 有効なアクセストークンを取得（必要なら refresh）。未連携/失敗は null。
 export async function getZoomAccessTokenForUser(
@@ -159,11 +179,34 @@ export async function getZoomAccessTokenForUser(
       }).toString(),
     });
     if (!res.ok) {
-      console.error(
-        "zoom token refresh failed:",
-        res.status,
-        (await res.text()).slice(0, 200),
-      );
+      const body = (await res.text()).slice(0, 200);
+      console.error("zoom token refresh failed:", res.status, body);
+      // ★連携が切れている（待っても直らない）ときは「切れた」印を付ける。
+      //   そのままだと画面は「連携済み」と出続け、主催者が気づけない。
+      if (isDeadZoomGrant(res.status, body)) {
+        // 同時に走った別の更新（例: 画面を2回続けて開いた・予約が同時に入った）が
+        // 先に鍵を使い切っただけ、という場合もこの応答になる。その場合は相手が
+        // 新しい鍵を保存するので、少し待って読み直し、変わっていればそれを使う。
+        await new Promise((r) => setTimeout(r, 1500));
+        const { data: again } = await supabase
+          .from("zoom_auth_tokens")
+          .select("access_token_encrypted, refresh_token_encrypted")
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (
+          again?.access_token_encrypted &&
+          again.refresh_token_encrypted !== data.refresh_token_encrypted
+        ) {
+          return decryptToken(again.access_token_encrypted as string);
+        }
+        // 読んだ鍵のままの行だけに印を付ける。相手の保存がこのあと届いても、
+        // 行は残っているので新しい鍵で上書きされ、連携は生きたままになる。
+        await supabase
+          .from("zoom_auth_tokens")
+          .update({ ...DEAD_TOKENS, updated_at: new Date().toISOString() })
+          .eq("user_id", userId)
+          .eq("refresh_token_encrypted", data.refresh_token_encrypted as string);
+      }
       return null;
     }
     const tok = (await res.json()) as {
@@ -196,18 +239,36 @@ export async function disconnectZoomUser(userId: string): Promise<void> {
   await supabase.from("zoom_auth_tokens").delete().eq("user_id", userId);
 }
 
-// 現在の接続状態
+
+// 現在の接続状態。
+//   connected = 鍵が生きている
+//   expired   = 以前は連携していたが切れている（連携し直しが必要）
+// Zoom 側の一時的な不調で確かめられないだけのときは、切れた扱いにしない。
 export async function getZoomConnectionStatus(
   userId: string,
-): Promise<{ connected: boolean; email: string | null }> {
+): Promise<{ connected: boolean; email: string | null; expired: boolean }> {
   const supabase = anonClient();
-  const { data } = await supabase
-    .from("zoom_auth_tokens")
-    .select("zoom_email")
-    .eq("user_id", userId)
-    .maybeSingle();
-  return {
-    connected: !!data,
-    email: (data?.zoom_email as string | null) ?? null,
-  };
+  const read = async () =>
+    (
+      await supabase
+        .from("zoom_auth_tokens")
+        .select("zoom_email, access_token_encrypted, refresh_token_encrypted")
+        .eq("user_id", userId)
+        .maybeSingle()
+    ).data;
+  const isDead = (r: { access_token_encrypted?: unknown; refresh_token_encrypted?: unknown }) =>
+    !r.access_token_encrypted && !r.refresh_token_encrypted;
+
+  const row = await read();
+  if (!row) return { connected: false, email: null, expired: false };
+  const email = (row.zoom_email as string | null) ?? null;
+  if (isDead(row)) return { connected: false, email, expired: true };
+
+  // 鍵の期限が来ていれば、ここで更新を試す（切れていればこの中で「切れた」印が付く）
+  const token = await getZoomAccessTokenForUser(userId);
+  if (token) return { connected: true, email, expired: false };
+  const after = await read();
+  if (after && isDead(after)) return { connected: false, email, expired: true };
+  // 一時的に確かめられなかっただけ。連携は残っているので「連携済み」のまま出す
+  return { connected: true, email, expired: false };
 }
