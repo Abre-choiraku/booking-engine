@@ -3,6 +3,7 @@ import { deleteStaffEvent } from "../google/staff-calendar";
 import { deleteZoomMeetingForUser } from "../zoom";
 import { notifyReservationCancelled, notifyReservationReminder } from "../notify";
 import type { BookingLinkRow, ReminderConfig } from "../types";
+import { reminderFireTime, resolveReminderMessage } from "../core/reminders";
 
 // ============================================================
 // 予約一覧・管理者キャンセル（主催者ダッシュボード用）
@@ -223,35 +224,9 @@ export async function cancelReservationByOwner(
   return { ok: true };
 }
 
-// リマインド1件の送信時刻(UTC ms)を計算。JST基準。無効なら null。
-function reminderFireTime(c: ReminderConfig, startMs: number): number | null {
-  if (c.kind === "before") {
-    if (!c.hours || c.hours <= 0) return null;
-    return startMs - c.hours * 60 * 60 * 1000;
-  }
-  // kind === "at": 予約日(JST)の days_before 日前、その日の time(HH:MM, JST) に送る
-  const JST = 9 * 60 * 60 * 1000;
-  const jst = new Date(startMs + JST); // UTCゲッターでJSTの年月日が読める
-  const y = jst.getUTCFullYear();
-  const mo = jst.getUTCMonth();
-  const d = jst.getUTCDate();
-  const parts = (c.time || "09:00").split(":");
-  let hh = parseInt(parts[0], 10);
-  let mm = parseInt(parts[1], 10);
-  if (!Number.isFinite(hh)) hh = 9;
-  if (!Number.isFinite(mm)) mm = 0;
-  const days = Number.isFinite(c.days_before) ? c.days_before : 0;
-  // 予約日の 00:00 JST を UTC ms で表す（= Date.UTC(...) - 9h）
-  const dayStartJstUtcMs = Date.UTC(y, mo, d, 0, 0, 0) - JST;
-  return (
-    dayStartJstUtcMs -
-    days * 24 * 60 * 60 * 1000 +
-    (hh * 60 + mm) * 60 * 1000
-  );
-}
-
 type ReminderRow = {
   id: string;
+  link_id: string;
   start_at: string;
   end_at: string;
   guest_name: string;
@@ -264,6 +239,7 @@ type ReminderRow = {
     reminder_hours: number | null;
     reminders: ReminderConfig[] | null;
     reminder_message?: string | null;
+    meeting_type?: "none" | "meet" | "zoom" | null;
   };
 };
 
@@ -275,6 +251,38 @@ function remindersOf(link: ReminderRow["link"] | null | undefined): ReminderConf
     return [{ kind: "before", hours: link.reminder_hours }];
   }
   return [];
+}
+
+function isOnline(link: ReminderRow["link"] | null | undefined): boolean {
+  return link?.meeting_type === "meet" || link?.meeting_type === "zoom";
+}
+
+const slotKey = (linkId: string, startAt: string) => `${linkId}|${Date.parse(startAt)}`;
+
+// 枠（グループ予約の共有予定）に保存された会議URLをまとめて読む。
+// 失敗してもリマインド自体は止めない（URLなしで送る）。
+async function loadSlotMeetUrls(rows: ReminderRow[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (rows.length === 0) return out;
+  const wanted = new Set(rows.map((r) => slotKey(r.link_id, r.start_at)));
+  const linkIds = [...new Set(rows.map((r) => r.link_id))];
+  // 対象の開始時刻だけに絞る（期間で取ると関係ない枠まで返り、件数上限で黙って切れる）
+  const startIsos = [...new Set(rows.map((r) => new Date(Date.parse(r.start_at)).toISOString()))];
+  const { data, error } = await anonClient()
+    .from("booking_slot_events")
+    .select("link_id, start_at, meet_url")
+    .in("link_id", linkIds)
+    .in("start_at", startIsos)
+    .not("meet_url", "is", null);
+  if (error) {
+    console.error("reminder slot meet_url lookup failed:", error.message);
+    return out;
+  }
+  for (const s of (data ?? []) as Array<{ link_id: string; start_at: string; meet_url: string }>) {
+    const k = slotKey(s.link_id, s.start_at);
+    if (wanted.has(k)) out.set(k, s.meet_url);
+  }
+  return out;
 }
 
 // リマインド送信対象を探してメール送信する。Cron から定期実行。
@@ -300,7 +308,7 @@ export async function sendDueReminders(): Promise<{ sent: number; checked: numbe
     const { data, error } = await supabase
       .from("booking_reservations")
       .select(
-        "id, start_at, end_at, guest_name, guest_email, line_user_id, meet_url, cancel_token, created_at, status, link:booking_links!inner(title, location, description, cancel_deadline_hours, owner_user_id, partner_client_id, reminder_hours, reminders, reminder_message)",
+        "id, link_id, start_at, end_at, guest_name, guest_email, line_user_id, meet_url, cancel_token, created_at, status, link:booking_links!inner(title, location, description, cancel_deadline_hours, owner_user_id, partner_client_id, reminder_hours, reminders, reminder_message, meeting_type)",
       )
       .eq("status", "confirmed")
       .gt("start_at", nowIso)
@@ -320,7 +328,11 @@ export async function sendDueReminders(): Promise<{ sent: number; checked: numbe
   //   以前は (予約 × リマインド設定) ごとに upsert を1往復していた。
   //   1万予約×3設定＝3万往復で、cron の実行時間に収まらない。
   //   先に候補を作り、claim をまとめて投げる。
-  const due: Array<{ row: ReminderRow; key: string; message: string | null }> = [];
+  const due: Array<{ row: ReminderRow; key: string; config: ReminderConfig }> = [];
+  // 同じ予約で送信時刻（分）が重なる設定は1通にまとめる。
+  // 送信済みの記録は (予約, 分) 単位なので、まとめないと同じ内容が2通届く
+  // （例: 10:00の予約に「当日 9:00」と「1時間前」）。
+  const seen = new Set<string>();
   for (const r of rows) {
     const configs = remindersOf(r.link);
     if (configs.length === 0) continue;
@@ -335,13 +347,11 @@ export async function sendDueReminders(): Promise<{ sent: number; checked: numbe
       if (fireMs === null) continue;
       if (nowMs < fireMs) continue; // まだ送信時刻に達していない
       if (createdMs && fireMs < createdMs) continue; // 予約時点で既に過ぎていた設定は送らない
-      due.push({
-        row: r,
-        // 分単位のキーで原子的に claim（重複送信防止）
-        key: new Date(fireMs).toISOString().slice(0, 16),
-        // このリマインド固有の案内文→無ければリンク共通の案内文
-        message: c.message?.trim() || r.link?.reminder_message?.trim() || null,
-      });
+      // 分単位のキーで原子的に claim（重複送信防止）
+      const key = new Date(fireMs).toISOString().slice(0, 16);
+      if (seen.has(`${r.id}|${key}`)) continue;
+      seen.add(`${r.id}|${key}`);
+      due.push({ row: r, key, config: c });
     }
   }
   if (due.length === 0) return { sent: 0, checked, failed: 0 };
@@ -363,11 +373,29 @@ export async function sendDueReminders(): Promise<{ sent: number; checked: numbe
     }
   }
 
+  // ★会議URLの取りこぼしを塞ぐ（2026-10-04）:
+  //   グループ予約の2人目以降は、1人目が会議を作成している最中に予約すると
+  //   予約行の meet_url が空のまま保存される。URLは枠（booking_slot_events）に
+  //   あるので、送る直前にそこから拾う。
+  const slotMeetUrl = await loadSlotMeetUrls(
+    due
+      .filter((d) => claimed.has(`${d.row.id}|${d.key}`))
+      .map((d) => d.row)
+      .filter((r) => !r.meet_url && isOnline(r.link)),
+  );
+
   let sent = 0;
   let failed = 0;
   for (const d of due) {
     if (!claimed.has(`${d.row.id}|${d.key}`)) continue; // 既に送信済み
     const r = d.row;
+    const meetUrl = r.meet_url ?? slotMeetUrl.get(slotKey(r.link_id, r.start_at)) ?? null;
+    // 個別メッセージ → リンク共通の案内文 → どちらも空なら既定文
+    const message = resolveReminderMessage(d.config, r.link?.reminder_message, {
+      online: isOnline(r.link),
+      hasUrl: !!meetUrl,
+      hasPlace: !!r.link?.location?.trim(),
+    });
     // ★2026-09-04: 以前はここが try/catch だったが、notifyReservationReminder は
     //   内部で例外を握りつぶす void 関数だったため、**catch は一度も動かなかった**。
     //   つまり「失敗したら claim を戻して再試行する」という安全網が死んでいた。
@@ -378,9 +406,9 @@ export async function sendDueReminders(): Promise<{ sent: number; checked: numbe
       guestEmail: r.guest_email,
       startIso: r.start_at,
       endIso: r.end_at,
-      meetUrl: r.meet_url,
+      meetUrl,
       cancelUrl: r.cancel_token ? `${baseUrl}/cancel/${r.cancel_token}` : null,
-      reminderMessage: d.message,
+      reminderMessage: message,
       lineFriendId: r.line_user_id,
     });
     if (outcome.ok) {

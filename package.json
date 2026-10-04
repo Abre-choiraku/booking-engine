@@ -11,6 +11,7 @@
     "./types": "./src/types.ts",
     "./config": "./src/config.ts",
     "./availability": "./src/core/availability.ts",
+    "./reminders": "./src/core/reminders.ts",
     "./google": "./src/google/oauth.ts",
     "./zoom": "./src/zoom/index.ts",
     "./notify": "./src/notify/index.ts",
@@ -25,7 +26,8 @@
     "README.md"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/*.test.mjs\""
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.0",
