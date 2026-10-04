@@ -4,6 +4,7 @@ import { deleteZoomMeetingForUser } from "../zoom";
 import { notifyReservationCancelled, notifyReservationReminder } from "../notify";
 import type { BookingLinkRow, ReminderConfig } from "../types";
 import { reminderFireTime, resolveReminderMessage } from "../core/reminders";
+import { isOnlineMeeting } from "../core/meeting";
 
 // ============================================================
 // 予約一覧・管理者キャンセル（主催者ダッシュボード用）
@@ -40,14 +41,21 @@ export type OwnerReservation = {
   // 付加情報
   link_title: string;
   link_type: "calendar" | "event" | "salon";
+  /** Web会議の種類。meet_url が空の予約に「URLが発行されていません」と出すために使う */
+  meeting_type?: "none" | "meet" | "zoom" | null;
   menu_name: string | null;
   staff_name: string | null;
 };
 
-type Row = Omit<OwnerReservation, "link_title" | "link_type" | "menu_name" | "staff_name"> & {
+type Row = Omit<OwnerReservation, "link_title" | "link_type" | "meeting_type" | "menu_name" | "staff_name"> & {
   google_event_id: string | null;
   zoom_meeting_id: string | null;
-  link: { owner_user_id: string; title: string; link_type: OwnerReservation["link_type"] };
+  link: {
+    owner_user_id: string;
+    title: string;
+    link_type: OwnerReservation["link_type"];
+    meeting_type?: OwnerReservation["meeting_type"];
+  };
 };
 
 // ============================================================
@@ -104,7 +112,7 @@ export async function listOwnerReservations(
   let q = supabase
     .from("booking_reservations")
     .select(
-      "id, link_id, start_at, end_at, guest_name, guest_email, guest_phone, guest_note, custom_answers, status, staff_id, menu_id, total_price, meet_url, cancel_token, created_at, line_user_id, notify_error, link:booking_links!inner(owner_user_id, title, link_type)",
+      "id, link_id, start_at, end_at, guest_name, guest_email, guest_phone, guest_note, custom_answers, status, staff_id, menu_id, total_price, meet_url, cancel_token, created_at, line_user_id, notify_error, link:booking_links!inner(owner_user_id, title, link_type, meeting_type)",
     )
     .eq("link.owner_user_id", ownerId);
   if (!opts?.includeCancelled) q = q.eq("status", "confirmed");
@@ -130,6 +138,22 @@ export async function listOwnerReservations(
     for (const s of (ss ?? []) as { id: string; name: string }[]) staffMap.set(s.id, s.name);
   }
 
+  // グループ予約の2人目以降は、予約行に会議URLが無く枠（booking_slot_events）にだけある
+  // ことがある。これから開催の分だけ枠から補う（一覧に「URL未発行」と誤って出さないため）。
+  const nowMs = Date.now();
+  const slotMeetUrl = await loadSlotMeetUrls(
+    rows.filter(
+      (r) =>
+        !r.meet_url &&
+        r.status === "confirmed" &&
+        Date.parse(r.start_at) > nowMs &&
+        isOnlineMeeting(r.link?.meeting_type),
+    ),
+  );
+  for (const r of rows) {
+    if (!r.meet_url) r.meet_url = slotMeetUrl.get(slotKey(r.link_id, r.start_at)) ?? null;
+  }
+
   return rows.map((r) => ({
     id: r.id,
     link_id: r.link_id,
@@ -151,6 +175,7 @@ export async function listOwnerReservations(
     notify_error: (r as { notify_error?: string | null }).notify_error ?? null,
     link_title: r.link?.title ?? "",
     link_type: r.link?.link_type ?? "calendar",
+    meeting_type: r.link?.meeting_type ?? null,
     menu_name: r.menu_id ? menuMap.get(r.menu_id) ?? null : null,
     staff_name: r.staff_id ? staffMap.get(r.staff_id) ?? null : null,
   }));
@@ -254,14 +279,16 @@ function remindersOf(link: ReminderRow["link"] | null | undefined): ReminderConf
 }
 
 function isOnline(link: ReminderRow["link"] | null | undefined): boolean {
-  return link?.meeting_type === "meet" || link?.meeting_type === "zoom";
+  return isOnlineMeeting(link?.meeting_type);
 }
 
 const slotKey = (linkId: string, startAt: string) => `${linkId}|${Date.parse(startAt)}`;
 
 // 枠（グループ予約の共有予定）に保存された会議URLをまとめて読む。
 // 失敗してもリマインド自体は止めない（URLなしで送る）。
-async function loadSlotMeetUrls(rows: ReminderRow[]): Promise<Map<string, string>> {
+async function loadSlotMeetUrls(
+  rows: Array<{ link_id: string; start_at: string }>,
+): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   if (rows.length === 0) return out;
   const wanted = new Set(rows.map((r) => slotKey(r.link_id, r.start_at)));
@@ -308,7 +335,7 @@ export async function sendDueReminders(): Promise<{ sent: number; checked: numbe
     const { data, error } = await supabase
       .from("booking_reservations")
       .select(
-        "id, link_id, start_at, end_at, guest_name, guest_email, line_user_id, meet_url, cancel_token, created_at, status, link:booking_links!inner(title, location, description, cancel_deadline_hours, owner_user_id, partner_client_id, reminder_hours, reminders, reminder_message, meeting_type)",
+        "id, link_id, start_at, end_at, guest_name, guest_email, line_user_id, meet_url, cancel_token, created_at, status, link:booking_links!inner(title, location, description, cancel_deadline_hours, owner_user_id, partner_client_id, reminder_hours, reminders, reminder_message, meeting_type, map_url)",
       )
       .eq("status", "confirmed")
       .gt("start_at", nowIso)

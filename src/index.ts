@@ -130,6 +130,7 @@ export {
   defaultReminderMessage,
   resolveReminderMessage,
 } from "./core/reminders";
+export { isOnlineMeeting, meetingUrlMissing } from "./core/meeting";
 // 改善要望（利用者フィードバック）
 export * as improvements from "./repo/improvements";
 export type {

@@ -12,6 +12,7 @@
     "./config": "./src/config.ts",
     "./availability": "./src/core/availability.ts",
     "./reminders": "./src/core/reminders.ts",
+    "./meeting": "./src/core/meeting.ts",
     "./google": "./src/google/oauth.ts",
     "./zoom": "./src/zoom/index.ts",
     "./notify": "./src/notify/index.ts",
